@@ -409,7 +409,7 @@ def _start_tournament() -> None:
     config = {
         "variant": variant,
         "selected_features": list(VARIANT_TOP_8_FEATURES.get(variant, ALL_FEATURES[:8])),
-        "depth": 1,
+        "depth": 2,
         "max_moves": 80,
         "seed": 42,
     }

@@ -59,14 +59,14 @@ def _parse_uci_move(last_move_uci: str | None) -> chess.Move | None:
 
 
 def _build_explosion_fill(exploded_squares: list[str] | None) -> dict[int, str]:
-    """Build a fill dict mapping square indices to orange highlight color."""
+    """Build a fill dict mapping square indices to a bright red explosion color."""
     fill: dict[int, str] = {}
     if not exploded_squares:
         return fill
     for sq_name in exploded_squares:
         try:
             sq = chess.parse_square(sq_name)
-            fill[sq] = "#ff6b3560"
+            fill[sq] = "#ff1818d8"  # vivid red, ~85% alpha — clearly readable as fire
         except Exception:
             pass
     return fill

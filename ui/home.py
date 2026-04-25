@@ -135,15 +135,15 @@ body {
   }
 }
 
-/* ── Chess animation grid (8x8 mini-boards each playing a real game) ── */
+/* ── Chess animation grid (3x6 mini-boards each playing a real game) ── */
 .chess-grid {
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  gap: 4px;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
   width: 100%;
-  max-width: 560px;
+  max-width: 820px;
   margin: 4px auto 32px;
-  opacity: 0.78;
+  opacity: 0.85;
   filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.4));
 }
 .mini {
@@ -574,6 +574,6 @@ body {
 
 def render_home_page() -> None:
     """Render the full-width animated landing page."""
-    payload = bake_animation_payload(64)
+    payload = bake_animation_payload(18)
     html = _HOME_TEMPLATE.replace("__ANIMATION_DATA__", payload)
     components.html(html, height=900, scrolling=False)

@@ -82,7 +82,7 @@ def _bake_game(variant: str, move_list: list[str]) -> dict[str, Any] | None:
 
 
 @lru_cache(maxsize=1)
-def bake_animation_payload(target_count: int = 64) -> str:
+def bake_animation_payload(target_count: int = 18) -> str:
     """Build the JSON payload for the home-page board grid.
 
     Mix: ~1/3 atomic, ~1/3 horde, ~1/3 mixed (standard/antichess/koth/threecheck/chess960).
@@ -103,18 +103,21 @@ def bake_animation_payload(target_count: int = 64) -> str:
         decisive = [g for g in decisive if len(g["move_list"]) >= 12]
         return [g["move_list"] for g in decisive[:max_games]]
 
-    atomic_games = _decisive_games("atomic", 25)
-    horde_games = _decisive_games("horde", 25)
+    # Roughly even thirds: 1/3 atomic, 1/3 horde, 1/3 mixed
+    n_atomic_target = target_count // 3
+    n_horde_target = target_count // 3
+    n_mixed_target = target_count - n_atomic_target - n_horde_target
+
+    atomic_games = _decisive_games("atomic", n_atomic_target + 4)
+    horde_games = _decisive_games("horde", n_horde_target + 4)
     mixed_pools = []
     for v in ("standard", "antichess", "kingofthehill", "threecheck", "chess960"):
-        mixed_pools.append((v, _decisive_games(v, 8)))
+        mixed_pools.append((v, _decisive_games(v, max(2, n_mixed_target // 4))))
 
     boards: list[dict[str, Any]] = []
 
-    # ~21 atomic, ~21 horde, ~22 mixed = 64 total
-    n_atomic = min(21, len(atomic_games))
-    n_horde = min(21, len(horde_games))
-    n_mixed_target = target_count - n_atomic - n_horde
+    n_atomic = min(n_atomic_target, len(atomic_games))
+    n_horde = min(n_horde_target, len(horde_games))
 
     for moves in atomic_games[:n_atomic]:
         baked = _bake_game("atomic", moves)

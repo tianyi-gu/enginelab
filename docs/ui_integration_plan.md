@@ -1,5 +1,7 @@
 # UI Integration & Deployment Plan (v2)
 
+> **STATUS: Complete as of 2026-04-25.** The Streamlit UI (`ui/app.py`) is fully wired to the real backend. All mocks have been replaced: the Build phase runs real agent generation and tournament, the Analysis phase shows real leaderboard/marginals/synergy data, and Play mode uses `AlphaBetaEngine` with the tournament champion's features. Pre-computed results are available in `outputs/data/`. The plan sections below are preserved as historical reference for the integration approach that was followed.
+
 *Updated 2026-04-25 after full audit of `origin/ui` branch.*
 
 ---
@@ -7,7 +9,7 @@
 ## Context
 
 The EngineLab backend on `main` is fully working -- chess engine, 3
-variants, 10 features, agent generation, alpha-beta search, tournament,
+variants, 12 features, agent generation, alpha-beta search, tournament,
 analysis, and CLI all run end-to-end.
 
 The `origin/ui` branch contains two separate frontends:
@@ -42,7 +44,7 @@ working backend from `main`. Replace mocks with real backend calls.
 | Standard chess | `variants/standard.py` | Done |
 | Atomic chess | `variants/atomic.py` | Done |
 | Antichess | `variants/antichess.py` | Done |
-| 10 features | `features/*.py`, `features/registry.py` | Done |
+| 12 features | `features/*.py`, `features/registry.py` | Done |
 | Agent generation | `agents/generate_agents.py` | Done |
 | Evaluation (all features) | `agents/evaluation.py` | Done |
 | Alpha-beta (variant-aware) | `search/alpha_beta.py` | Done |
@@ -72,7 +74,7 @@ working backend from `main`. Replace mocks with real backend calls.
 | Component | Status |
 |-----------|--------|
 | `webapp/src/components/chess/ChessLab.tsx` | 956 lines, full UI |
-| `webapp/src/lib/chess/features.ts` | All 10 features reimplemented in TS |
+| `webapp/src/lib/chess/features.ts` | 10 core features reimplemented in TS (variant-specific features not included) |
 | `webapp/src/lib/chess/engine.ts` | Negamax alpha-beta in TS |
 | `webapp/src/lib/chess/analysis.ts` | Marginals + synergy in TS |
 
@@ -83,8 +85,8 @@ Self-contained. Runs entirely in-browser. Deployable to Cloudflare Workers.
 
 | File | What was regressed | Impact |
 |------|-------------------|--------|
-| `features/registry.py` | Emptied -- all 10 features removed | Agents get 0.0 for all features |
-| `features/*.py` (10 files) | Deleted | No feature implementations |
+| `features/registry.py` | Emptied -- all features removed | Agents get 0.0 for all features |
+| `features/*.py` (12 files) | Deleted | No feature implementations |
 | `variants/atomic.py` | Reverted to `NotImplementedError` stub | Atomic chess broken |
 | `variants/antichess.py` | Reverted to stub | Antichess broken |
 | `search/alpha_beta.py` | Removed `variant` parameter, hardcoded standard | Can't search in variants |
@@ -337,7 +339,7 @@ but the Streamlit `ui/` does not.
 
 | UI Feature | Current State (mocked) | What Rewiring Looks Like |
 |-----------|----------------------|--------------------------|
-| Feature selection | Hardcoded 10-item list in `constants.py` | Pull from `features.registry.get_feature_names()` |
+| Feature selection | Hardcoded feature list in `constants.py` | Pull from `features.registry.get_feature_names()` |
 | "Build Engine" button | Fakes 5s delay, loads `mock_data.py` | Launches real `generate_agents` + `run_round_robin` + analysis in background thread |
 | Progress bar | Timer-based fake (0% to 100% over 5s) | Real `on_game_complete(done, total)` callback from tournament |
 | Leaderboard table | Synthetic `LeaderboardRow` objects from mock | Real `compute_leaderboard(results, agents)` output |

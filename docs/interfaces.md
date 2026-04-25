@@ -207,12 +207,14 @@ def feature_name(board: Board, color: str) -> float:
     """Positive = good for color. Must not mutate board."""
 ```
 
-Full feature set (10 features):
+Full feature set (12 features):
 - **Material:** `material`
 - **Positional:** `piece_position`, `center_control`
 - **Safety:** `king_safety`, `enemy_king_danger`
 - **Dynamic:** `mobility`, `pawn_structure`, `bishop_pair`, `rook_activity`,
   `capture_threats`
+- **Variant-specific:** `antichess_material` (piece-count bonus for antichess win condition),
+  `explosion_proximity` (proximity to enemy piece clusters for atomic)
 
 ---
 

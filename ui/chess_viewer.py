@@ -405,7 +405,7 @@ body {
   display: flex; flex-direction: column; align-items: center;
   padding: 4px 0 0;
 }
-#board { width: 460px; }
+#board { width: 460px; cursor: pointer; }
 .board-b72b1 { border: 2px solid #2c2b29 !important; border-radius: 2px; }
 
 /* Legal move dots */
@@ -418,6 +418,10 @@ body {
 /* Last move highlight */
 .highlight-lastmove {
   background-color: rgba(155, 199, 0, 0.35) !important;
+}
+/* Selected piece */
+.highlight-selected {
+  background-color: rgba(98, 153, 36, 0.55) !important;
 }
 /* Atomic explosion highlight */
 .highlight-explosion {
@@ -463,6 +467,7 @@ var GAME_STATUS = "__STATUS__";
 var LAST_MOVE_SQUARES = __LAST_MOVE_SQUARES__;
 var EXPLODED_SQUARES = __EXPLODED_SQUARES__;
 var pendingPromotion = null;
+var selectedSquare = null;
 
 // Build lookup: source -> [target, ...]
 var legalTargets = {};
@@ -472,58 +477,85 @@ LEGAL_MOVES.forEach(function(uci) {
   legalTargets[from].push(to);
 });
 
-var dragging = false;
-var dragSource = null;
+// Board — display only, no drag (drag doesn't work in Streamlit iframes)
+var board = Chessboard('board', {
+  position: '__FEN__',
+  pieceTheme: '__PIECE_THEME__',
+  draggable: false,
+  onMouseoverSquare: function(sq) { if (!selectedSquare) onMouseover(sq); },
+  onMouseoutSquare: function() { if (!selectedSquare) onMouseout(); },
+});
 
-function createBoard() {
-  return Chessboard('board', {
-    position: '__FEN__',
-    pieceTheme: '__PIECE_THEME__',
-    draggable: true,
-    dropOffBoard: 'snapback',
-    onDragStart: onDragStart,
-    onDrop: onDrop,
-    onSnapEnd: function() { board.position('__FEN__'); dragging = false; dragSource = null; },
-    onMouseoverSquare: function(sq) { if (!dragging) onMouseover(sq); },
-    onMouseoutSquare: function() { if (!dragging) onMouseout(); },
-  });
-}
-var board = createBoard();
+// ── Click-to-move ───────────────────────────────────────────────────────────
+document.getElementById('board').addEventListener('click', function(e) {
+  if (GAME_STATUS !== 'ongoing') return;
+  // Walk up from click target to find the square element
+  var el = e.target;
+  var square = null;
+  while (el && el.id !== 'board') {
+    if (el.className && typeof el.className === 'string') {
+      var m = el.className.match(/square-([a-h][1-8])/);
+      if (m) { square = m[1]; break; }
+    }
+    el = el.parentElement;
+  }
+  if (!square) return;
 
-function onDragStart(source, piece) {
-  if (GAME_STATUS !== 'ongoing') return false;
-  if (piece.search(/^b/) !== -1) return false;
-  if (!legalTargets[source] || legalTargets[source].length === 0) return false;
-  dragging = true;
-  dragSource = source;
-  onMouseout();  // clear any hover highlights
-  // Show legal targets for the dragged piece
   var pos = board.position();
-  (legalTargets[source] || []).forEach(function(t) {
+  var piece = pos[square];
+
+  if (selectedSquare) {
+    // ── A piece is already selected ──
+    if (square === selectedSquare) {
+      deselect(); return;                          // click same piece → deselect
+    }
+    if (legalTargets[selectedSquare] && legalTargets[selectedSquare].indexOf(square) !== -1) {
+      // Legal target → make the move
+      var srcPiece = pos[selectedSquare];
+      if (srcPiece === 'wP' && square[1] === '8') {
+        pendingPromotion = { from: selectedSquare, to: square };
+        deselect();
+        document.getElementById('promo-modal').classList.add('show');
+        return;
+      }
+      var uci = selectedSquare + square;
+      deselect();
+      sendMove(uci);
+      return;
+    }
+    // Click another own piece with moves → switch selection
+    if (piece && piece[0] === 'w' && legalTargets[square] && legalTargets[square].length > 0) {
+      deselect(); selectPiece(square); return;
+    }
+    deselect(); return;                            // click elsewhere → deselect
+  }
+
+  // ── No piece selected ──
+  if (piece && piece[0] === 'w' && legalTargets[square] && legalTargets[square].length > 0) {
+    selectPiece(square);
+  }
+});
+
+function selectPiece(square) {
+  selectedSquare = square;
+  onMouseout(); // clear hover hints
+  var el = document.querySelector('.square-' + square);
+  if (el) el.classList.add('highlight-selected');
+  var pos = board.position();
+  (legalTargets[square] || []).forEach(function(t) {
     var e = document.querySelector('.square-' + t);
     if (e) e.classList.add(pos[t] ? 'highlight-capture' : 'highlight-legal');
   });
 }
 
-function onDrop(source, target) {
-  dragSource = null;  // mark handled so backup handler is a no-op
-  onMouseout();  // clear highlights
-  if (!legalTargets[source] || legalTargets[source].indexOf(target) === -1) {
-    return 'snapback';
-  }
-
-  // Detect pawn promotion
-  var piece = board.position()[source];
-  if (piece === 'wP' && target[1] === '8') {
-    pendingPromotion = { from: source, to: target };
-    document.getElementById('promo-modal').classList.add('show');
-    return 'snapback';
-  }
-
-  sendMove(source + target);
-  return 'trash';  // hide piece immediately; page will reload with new position
+function deselect() {
+  selectedSquare = null;
+  document.querySelectorAll('.highlight-selected,.highlight-legal,.highlight-capture').forEach(function(e) {
+    e.classList.remove('highlight-selected', 'highlight-legal', 'highlight-capture');
+  });
 }
 
+// ── Promotion ───────────────────────────────────────────────────────────────
 function doPromotion(p) {
   document.getElementById('promo-modal').classList.remove('show');
   if (!pendingPromotion) return;
@@ -531,18 +563,18 @@ function doPromotion(p) {
   pendingPromotion = null;
 }
 
+// ── Send move to Python via query params ────────────────────────────────────
 function sendMove(uci) {
-  // Navigate parent to trigger Streamlit rerun with move in query params
   try {
     var url = new URL(window.parent.location.href);
     url.searchParams.set('chess_move', uci);
     window.parent.location.href = url.toString();
   } catch(e) {
-    // Fallback: try setting on top-level
     window.top.location.search = '?chess_move=' + uci;
   }
 }
 
+// ── Hover hints (only when no piece is selected) ────────────────────────────
 function onMouseover(square) {
   if (GAME_STATUS !== 'ongoing') return;
   var targets = legalTargets[square];
@@ -563,7 +595,8 @@ function onMouseout() {
   });
 }
 
-function applyHighlights() {
+// ── Last-move and explosion highlights ──────────────────────────────────────
+(function() {
   LAST_MOVE_SQUARES.forEach(function(sq) {
     var el = document.querySelector('.square-' + sq);
     if (el) el.classList.add('highlight-lastmove');
@@ -572,55 +605,7 @@ function applyHighlights() {
     var el = document.querySelector('.square-' + sq);
     if (el) el.classList.add('highlight-explosion');
   });
-}
-applyHighlights();
-
-// Backup drop handler — fixes chessboard.js drag-drop in Streamlit iframes
-// where the library's jQuery mouseup binding silently fails to fire.
-// Uses raw addEventListener which bypasses jQuery. If chessboard.js's native
-// handler works, dragSource is already null (cleared in onDrop) so this is a no-op.
-document.addEventListener('mouseup', function(e) {
-  if (!dragSource) return;
-  var src = dragSource;
-  dragSource = null;
-  dragging = false;
-
-  // Calculate target square from mouse position relative to the board grid
-  var boardDiv = document.querySelector('.board-b72b1');
-  var target = null;
-  if (boardDiv) {
-    var rect = boardDiv.getBoundingClientRect();
-    var bw = 2; // border-width from CSS
-    var x = e.clientX - rect.left - bw;
-    var y = e.clientY - rect.top - bw;
-    var inner = rect.width - 2 * bw;
-    if (x >= 0 && y >= 0 && x < inner && y < inner) {
-      var col = Math.min(7, Math.floor(8 * x / inner));
-      var row = Math.min(7, Math.floor(8 * y / inner));
-      target = String.fromCharCode(97 + col) + String(8 - row);
-    }
-  }
-
-  // Destroy and recreate the board to fully reset chessboard.js internal
-  // drag state (isDragging flag, mousemove binding, floating piece element).
-  board.destroy();
-  board = createBoard();
-  onMouseout();
-  applyHighlights();
-
-  if (!target || target === src) return;
-  if (!legalTargets[src] || legalTargets[src].indexOf(target) === -1) return;
-
-  // Pawn promotion
-  var pos = board.position();
-  if (pos[src] === 'wP' && target[1] === '8') {
-    pendingPromotion = { from: src, to: target };
-    document.getElementById('promo-modal').classList.add('show');
-    return;
-  }
-
-  sendMove(src + target);
-});
+})();
 
 $(window).resize(function() { board.resize(); });
 </script>

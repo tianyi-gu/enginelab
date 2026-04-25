@@ -15,18 +15,22 @@ _HOME_TEMPLATE = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100;200;300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=BBH+Sans+Bartle&display=swap');
 
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
   background: #161512;
   color: #bababa;
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: 'Geist Mono', monospace;
+  text-transform: lowercase;
   overflow: hidden;
   width: 100%;
   height: 100%;
   position: relative;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* ── WebGL shader background (Darwin NeuroShaderCanvas) ──── */
@@ -102,48 +106,60 @@ body {
   text-align: center;
 }
 
-/* Title */
+/* Title — matches Darwin's .title styling */
 .title {
-  font-size: 4.2rem;
-  font-weight: 800;
-  color: #e8e6e3;
-  letter-spacing: 0.18em;
-  -webkit-text-stroke: 1px rgba(98, 153, 36, 0.35);
+  font-size: 3rem;
+  color: transparent;
+  text-align: center;
+  margin: 0 0 6px;
+  line-height: 1;
+  font-weight: 400;
+  -webkit-text-stroke: 1.5px rgba(255, 255, 255, 0.9);
+  text-stroke: 1.5px rgba(255, 255, 255, 0.9);
   text-shadow:
-    0 0 20px rgba(98,153,36,0.5),
-    0 0 40px rgba(98,153,36,0.25),
-    0 0 80px rgba(98,153,36,0.1);
+    0 0 15px rgba(255, 255, 255, 0.15),
+    0 0 30px rgba(98, 153, 36, 0.2);
+  font-family: "BBH Sans Bartle", sans-serif;
+  text-transform: lowercase;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: 0.2em;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
   animation: pulseGlow 4s ease-in-out infinite;
-  margin-bottom: 6px;
 }
 .subtitle {
-  font-size: 0.95rem;
-  color: #629924;
-  letter-spacing: 0.25em;
-  text-transform: uppercase;
-  font-weight: 600;
+  font-family: 'Geist Mono', monospace;
+  font-size: 0.9rem;
+  color: white;
+  text-align: center;
+  margin: 0.75rem 0 0 0;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
   margin-bottom: 12px;
 }
 .tagline {
-  font-size: 0.82rem;
-  color: #7a7775;
+  font-family: 'Geist Mono', monospace;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.5);
   max-width: 520px;
   line-height: 1.6;
   margin-bottom: 36px;
+  font-weight: 200;
+  letter-spacing: 0.02em;
 }
 
 @keyframes pulseGlow {
   0%, 100% {
     text-shadow:
-      0 0 20px rgba(98,153,36,0.5),
-      0 0 40px rgba(98,153,36,0.25),
-      0 0 80px rgba(98,153,36,0.1);
+      0 0 15px rgba(255, 255, 255, 0.15),
+      0 0 30px rgba(98,153,36,0.2);
   }
   50% {
     text-shadow:
-      0 0 30px rgba(98,153,36,0.7),
-      0 0 60px rgba(98,153,36,0.4),
-      0 0 100px rgba(98,153,36,0.15);
+      0 0 20px rgba(255, 255, 255, 0.25),
+      0 0 40px rgba(98,153,36,0.35),
+      0 0 60px rgba(98,153,36,0.15);
   }
 }
 
@@ -182,29 +198,34 @@ body {
   filter: drop-shadow(0 0 6px rgba(98,153,36,0.4));
 }
 .agent-name {
-  font-size: 0.82rem;
-  font-weight: 700;
-  color: #d0cfc8;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: 'BBH Sans Bartle', sans-serif;
+  font-size: 0.85rem;
+  text-transform: lowercase;
+  letter-spacing: 0.1em;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 .agent-traits {
-  font-size: 0.68rem;
-  color: #629924;
+  color: rgba(255, 255, 255, 0.7);
+  font-family: 'Geist Mono', monospace;
+  font-size: 0.65rem;
   margin-bottom: 10px;
-  font-style: italic;
+  font-weight: 400;
+  letter-spacing: 0.02em;
 }
 .agent-terminal {
-  background: rgba(22, 21, 18, 0.7);
-  border: 1px solid #2c2b29;
-  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
   padding: 10px 12px;
-  font-family: 'Courier New', monospace;
-  font-size: 0.7rem;
-  color: #7a7775;
+  font-family: 'Geist Mono', monospace;
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.7);
   height: 72px;
   overflow: hidden;
-  line-height: 1.65;
+  line-height: 1.5;
 }
 .agent-terminal .line {
   white-space: nowrap;
@@ -212,20 +233,25 @@ body {
 }
 .cursor {
   color: #629924;
-  animation: blink 0.8s step-end infinite;
+  font-weight: bold;
+  animation: blink 1s step-end infinite;
 }
 @keyframes blink {
-  50% { opacity: 0; }
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
 }
 
 /* ── Bottom info ───────────────────────────────────────────── */
 .bottom-info {
+  font-family: 'Geist Mono', monospace;
   font-size: 0.72rem;
-  color: #4a4845;
-  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.35);
+  letter-spacing: 0.04em;
+  font-weight: 200;
 }
 .bottom-info span {
-  color: #629924;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 400;
 }
 
 /* ── Fade-in ───────────────────────────────────────────────── */

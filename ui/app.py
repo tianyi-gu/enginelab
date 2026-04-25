@@ -8,6 +8,8 @@ import random
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import re
+
 import chess
 import pandas as pd
 import plotly.graph_objects as go
@@ -35,113 +37,110 @@ st.set_page_config(
 
 _CSS = """
 <style>
-/* ── Inter font ───────────────────────────────────────────── */
+/* ── Font ─────────────────────────────────────────────────── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
-body, .stApp, p, label, div, span, button, input,
-.stMarkdown, [class*="st-"] {
+*, *::before, *::after {
     font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
+    box-sizing: border-box;
 }
 
-/* ── Global background ───────────────────────────────────── */
-body, .stApp { background: #161512 !important; }
+/* ── Page ─────────────────────────────────────────────────── */
+body, .stApp { background: #161512 !important; color: #bababa !important; }
 
+/* Key: constrain width like a real chess site, center it */
 .block-container {
-    padding-top: 0.4rem !important;
-    max-width: 100% !important;
-    padding-left: 1rem !important;
-    padding-right: 1rem !important;
+    max-width: 1040px !important;
+    margin: 0 auto !important;
+    padding: 0.5rem 1.2rem 1rem !important;
 }
 
 /* ── Typography ──────────────────────────────────────────── */
 h3 {
     color: #d0cfc8 !important;
-    border-left: 3px solid #629924;
-    padding-left: 9px !important;
-    margin-bottom: 10px !important;
-    font-size: 1rem !important;
+    border-left: 3px solid #629924 !important;
+    padding-left: 8px !important;
+    margin: 0 0 8px !important;
+    font-size: 0.9rem !important;
     font-weight: 600 !important;
-    letter-spacing: 0.01em !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.06em !important;
 }
-p, label, .stMarkdown { color: #bababa !important; }
-.stCaption, small { color: #888 !important; font-size: 12px !important; }
+p, label, .stMarkdown, span { color: #bababa !important; }
+small, .stCaption > p { color: #7a7775 !important; font-size: 11.5px !important; }
 
-/* ── Primary button (Lichess green) ─────────────────────── */
+/* ── Buttons ─────────────────────────────────────────────── */
+div[data-testid="stButton"] > button {
+    background: #2c2b29 !important;
+    border: 1px solid #3a3a38 !important;
+    color: #bababa !important;
+    font-size: 13px !important;
+    padding: 4px 12px !important;
+    border-radius: 4px !important;
+    transition: all 0.12s !important;
+}
+div[data-testid="stButton"] > button:hover {
+    background: #3a3a38 !important;
+    border-color: #629924 !important;
+    color: #d0cfc8 !important;
+}
 div[data-testid="stButton"] > button[kind="primary"] {
     background: #629924 !important;
     color: #fff !important;
     font-weight: 600 !important;
     border: none !important;
-    font-family: 'Inter', sans-serif !important;
 }
-div[data-testid="stButton"] > button[kind="primary"]:hover {
-    background: #4e7a1b !important;
-}
+div[data-testid="stButton"] > button[kind="primary"]:hover { background: #4e7a1b !important; }
 
-/* ── Secondary buttons ───────────────────────────────────── */
-div[data-testid="stButton"] > button {
-    background: #272522 !important;
-    border: 1px solid #3a3a38 !important;
-    color: #bababa !important;
-    font-family: 'Inter', sans-serif !important;
-}
-div[data-testid="stButton"] > button:hover {
-    background: #3a3a38 !important;
-    border-color: #629924 !important;
-}
-
-/* ── Tabs ────────────────────────────────────────────────── */
+/* ── Tabs ─────────────────────────────────────────────────── */
+div[data-testid="stTabs"] { background: transparent !important; }
 div[data-testid="stTabs"] button {
-    font-family: 'Inter', sans-serif !important;
-    font-size: 12.5px !important;
-    color: #888 !important;
-    font-weight: 500 !important;
+    font-size: 12px !important; color: #7a7775 !important;
+    font-weight: 500 !important; padding: 6px 10px !important;
 }
 div[data-testid="stTabs"] button[aria-selected="true"] {
-    color: #d0cfc8 !important;
-    border-bottom-color: #629924 !important;
+    color: #d0cfc8 !important; border-bottom: 2px solid #629924 !important;
 }
 
-/* ── Dataframes ──────────────────────────────────────────── */
+/* ── Inputs ───────────────────────────────────────────────── */
+div[data-testid="stTextInput"] input,
+div[data-testid="stMultiSelect"] {
+    background: #1f1e1c !important;
+    border-color: #3a3a38 !important;
+    color: #bababa !important;
+    font-size: 13px !important;
+}
+
+/* ── Radio ────────────────────────────────────────────────── */
+div[data-testid="stRadio"] label { font-size: 12.5px !important; color: #bababa !important; }
+div[data-testid="stRadio"] p { color: #bababa !important; font-size: 12.5px !important; }
+
+/* ── Checkbox ─────────────────────────────────────────────── */
+div[data-testid="stCheckbox"] label { font-size: 12.5px !important; color: #bababa !important; }
+
+/* ── Dataframe ────────────────────────────────────────────── */
 div[data-testid="stDataFrame"] {
-    border: 1px solid #3a3a38;
-    border-radius: 6px;
-    overflow: hidden;
+    border: 1px solid #3a3a38 !important; border-radius: 5px !important;
 }
 
-/* ── Metric cards ────────────────────────────────────────── */
-div[data-testid="metric-container"] {
-    background: #272522;
-    border: 1px solid #3a3a38;
-    border-radius: 8px;
-    padding: 12px 16px !important;
-}
+/* ── Alerts ───────────────────────────────────────────────── */
+div[data-testid="stAlert"] { border-radius: 6px !important; font-size: 13px !important; }
 
-/* ── Alerts ──────────────────────────────────────────────── */
-div[data-testid="stAlert"] { border-radius: 8px !important; }
+/* ── Dividers ─────────────────────────────────────────────── */
+hr { border-color: #2c2b29 !important; margin: 8px 0 !important; }
 
-/* ── Dividers & misc ─────────────────────────────────────── */
-hr { border-color: #3a3a38 !important; }
-
-/* ── Move list (play panel) ──────────────────────────────── */
+/* ── Move list ────────────────────────────────────────────── */
 .move-list-scroll {
-    background: #1f1e1c;
-    border: 1px solid #3a3a38;
-    border-radius: 6px;
-    padding: 8px 12px;
-    height: 200px;
-    overflow-y: auto;
-    font-family: 'Courier New', monospace;
-    font-size: 13px;
-    color: #bababa;
-    line-height: 1.9;
+    background: #1f1e1c; border: 1px solid #3a3a38;
+    border-radius: 5px; padding: 6px 10px;
+    height: 170px; overflow-y: auto;
+    font-family: 'Courier New', monospace !important;
+    font-size: 12.5px; color: #bababa; line-height: 1.8;
 }
 
-/* ── Scrollable container override ──────────────────────── */
-div[data-testid="stVerticalBlockBorderWrapper"] > div > div[style*="overflow"] {
-    scrollbar-width: thin;
-    scrollbar-color: #3a3a38 #161512;
-}
+/* ── Scrollbars ───────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: #161512; }
+::-webkit-scrollbar-thumb { background: #3a3a38; border-radius: 3px; }
 </style>
 """
 
@@ -149,18 +148,14 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div > div[style*="overflow"] {
 # Header HTML
 # ---------------------------------------------------------------------------
 
-HEADER_HTML = """
-<div style="background:#272522;border-left:4px solid #629924;
-            padding:10px 20px;margin-bottom:12px;display:flex;
-            align-items:center;gap:10px;">
-    <span style="font-size:1.5rem;">♟</span>
-    <span style="font-size:1.2rem;font-weight:700;color:#bababa;
-                 letter-spacing:-0.3px;">EngineLab</span>
-    <span style="font-size:0.8rem;color:#888;margin-left:6px;">
-        Feature-subset strategy discovery for chess variants
-    </span>
-</div>
-"""
+HEADER_HTML = (
+    '<div style="display:flex;align-items:center;gap:8px;'
+    'padding:6px 0 10px;border-bottom:1px solid #2c2b29;margin-bottom:10px;">'
+    '<span style="font-size:1.2rem;line-height:1;">♟</span>'
+    '<span style="font-size:1rem;font-weight:700;color:#d0cfc8;letter-spacing:-0.2px;">EngineLab</span>'
+    '<span style="font-size:11px;color:#7a7775;margin-left:4px;">feature-subset engine discovery</span>'
+    '</div>'
+)
 
 # ---------------------------------------------------------------------------
 # Session state defaults
@@ -357,6 +352,20 @@ def _engine_reply(fen: str) -> str | None:
 # Board area (left column)
 # ---------------------------------------------------------------------------
 
+_BOARD_PX = 460  # fixed board size in pixels
+
+
+def _show_svg(svg: str) -> None:
+    """Render a python-chess SVG at exactly _BOARD_PX, centered."""
+    # Override the SVG's own width/height attrs so it respects our size
+    svg_fixed = re.sub(r'\bwidth="\d+(?:\.\d+)?"', f'width="{_BOARD_PX}"', svg, count=1)
+    svg_fixed = re.sub(r'\bheight="\d+(?:\.\d+)?"', f'height="{_BOARD_PX}"', svg_fixed, count=1)
+    st.markdown(
+        f'<div style="display:flex;justify-content:center;">{svg_fixed}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_board_area() -> None:
     view = st.session_state.get("view", "build")
 
@@ -367,20 +376,17 @@ def _render_board_area() -> None:
             black = _agent_short_name(st.session_state.get("sample_game_black", "Black"))
             result = st.session_state.get("sample_game_result", "")
             chess_game_viewer(moves=moves, white_name=white, black_name=black,
-                              result=result, board_size=380, height=560)
+                              result=result, board_size=_BOARD_PX, height=_BOARD_PX + 90)
             return
 
     if view == "play":
         fen = st.session_state.get("play_fen", chess.STARTING_FEN)
         flipped = st.session_state.get("play_flipped", False)
         last_move = (st.session_state.get("play_moves") or [None])[-1]
-        svg = render_board(fen, last_move_uci=last_move, size=480, flipped=flipped)
-        st.image(svg, use_container_width=True)
+        _show_svg(render_board(fen, last_move_uci=last_move, size=_BOARD_PX, flipped=flipped))
         return
 
-    # Build / Live: static starting position
-    svg = render_board(starting_fen(), size=480)
-    st.image(svg, use_container_width=True)
+    _show_svg(render_board(starting_fen(), size=_BOARD_PX))
 
 
 # ---------------------------------------------------------------------------
@@ -388,92 +394,75 @@ def _render_board_area() -> None:
 # ---------------------------------------------------------------------------
 
 def _render_build_panel() -> None:
-    st.markdown("### Build Engine")
+    st.markdown("### Build Your Engine")
 
-    # Variant selector
-    variants = ["standard", "atomic", "antichess"]
+    # ── Variant selector (pill buttons) ──────────────────────────
+    st.caption("VARIANT")
     v_cols = st.columns(3)
-    for col, v in zip(v_cols, variants):
+    for col, v in zip(v_cols, ["standard", "atomic", "antichess"]):
         active = st.session_state["variant"] == v
-        border_color = "#629924" if active else "#3a3a38"
-        col.markdown(
-            f'<div style="border:2px solid {border_color};border-radius:8px;'
-            f'padding:8px 12px;background:#272522;margin-bottom:4px;">'
-            f'<div style="font-weight:600;color:#bababa;">{v.title()}</div>'
-            f'<div style="font-size:11px;color:#888;">{VARIANT_DESCRIPTIONS[v]}</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-        if col.button(
-            "✓ Selected" if active else "Select",
-            key=f"variant_btn_{v}",
-            use_container_width=True,
-        ):
+        label = ("✓ " if active else "") + v.title()
+        if col.button(label, key=f"v_{v}", use_container_width=True):
             st.session_state["variant"] = v
             st.rerun()
 
-    st.divider()
+    st.markdown('<div style="margin-top:12px;"></div>', unsafe_allow_html=True)
 
-    # Preset buttons
-    st.markdown("**Select Features**")
+    # ── Feature multiselect + preset row ─────────────────────────
+    st.caption("FEATURES")
     p_cols = st.columns(3)
     for col, (label, feats) in zip(p_cols, PRESETS.items()):
-        if col.button(label, key=f"preset_{label}", use_container_width=True):
+        if col.button(label, key=f"p_{label}", use_container_width=True):
             st.session_state["selected_features"] = list(feats)
             st.rerun()
 
-    # Feature checkboxes — 2-col grid
-    selected: list[str] = []
-    cb_cols = st.columns(2)
-    for i, feat in enumerate(ALL_FEATURES):
-        checked = feat in st.session_state["selected_features"]
-        if cb_cols[i % 2].checkbox(
-            FEATURE_DISPLAY_NAMES[feat],
-            value=checked,
-            key=f"feat_{feat}",
-        ):
-            selected.append(feat)
+    selected = st.multiselect(
+        "features",
+        options=ALL_FEATURES,
+        default=st.session_state["selected_features"],
+        format_func=lambda f: FEATURE_DISPLAY_NAMES[f],
+        label_visibility="collapsed",
+        key="features_multiselect",
+    )
     st.session_state["selected_features"] = selected
 
     n_agents, n_games = _est_agents_games(selected)
-    st.caption(f"Est. **{n_agents}** agents · **{n_games:,}** games")
-    if n_games > 5000:
-        st.warning("Over 5,000 games — this may take a while.")
+    warn = " ⚠ long run" if n_games > 5000 else ""
+    st.caption(f"{n_agents} agents · {n_games:,} games{warn}")
 
-    st.divider()
+    st.markdown('<div style="margin-top:10px;"></div>', unsafe_allow_html=True)
 
-    # Depth radio
+    # ── Depth ─────────────────────────────────────────────────────
+    st.caption("SEARCH DEPTH")
     depth_labels = ["Fast (1)", "Normal (2)", "Deep (3)"]
     depth_choice = st.radio(
-        "Search Depth",
+        "depth",
         depth_labels,
         index=st.session_state["depth"] - 1,
         horizontal=True,
+        label_visibility="collapsed",
         key="depth_radio",
     )
     st.session_state["depth"] = depth_labels.index(depth_choice) + 1
 
-    st.divider()
+    st.markdown('<div style="margin-top:14px;"></div>', unsafe_allow_html=True)
 
+    # ── Action buttons ────────────────────────────────────────────
     can_run = len(selected) >= 2
-    if not can_run:
-        st.caption("Select at least 2 features to build.")
-
-    build_col, demo_col = st.columns([3, 2])
-    if build_col.button(
+    b_col, d_col = st.columns([3, 2])
+    if b_col.button(
         "Build Engine",
         type="primary",
         use_container_width=True,
         disabled=not can_run,
     ):
         _start_tournament()
-
-    if demo_col.button("Load Demo", use_container_width=True):
+    if d_col.button("Load Demo", use_container_width=True):
         from ui.mock_data import generate_mock_session_state
-        state = generate_mock_session_state()
-        state["view"] = "analysis"
-        st.session_state.update(state)
+        st.session_state.update({**generate_mock_session_state(), "view": "analysis"})
         st.rerun()
+    if not can_run:
+        st.caption("Select at least 2 features.")
 
 
 # ---------------------------------------------------------------------------
@@ -626,8 +615,8 @@ def _render_analysis_panel() -> None:
                 hovertemplate="%{y}: %{x:+.4f}<extra></extra>",
             ))
             fig.update_layout(
-                height=310,
-                margin=dict(l=0, r=10, t=10, b=0),
+                height=260,
+                margin=dict(l=0, r=10, t=6, b=0),
                 yaxis=dict(autorange="reversed"),
                 xaxis_title="Win-rate impact",
                 **_CHART_THEME,
@@ -655,7 +644,7 @@ def _render_analysis_panel() -> None:
                 hovertemplate="%{y}: %{x:+.4f}<extra></extra>",
             ))
             fig_pos.update_layout(
-                height=200, margin=dict(l=0, r=10, t=4, b=0),
+                height=180, margin=dict(l=0, r=10, t=4, b=0),
                 yaxis=dict(autorange="reversed"),
                 **_CHART_THEME,
             )
@@ -670,7 +659,7 @@ def _render_analysis_panel() -> None:
                 hovertemplate="%{y}: %{x:+.4f}<extra></extra>",
             ))
             fig_neg.update_layout(
-                height=200, margin=dict(l=0, r=10, t=4, b=0),
+                height=180, margin=dict(l=0, r=10, t=4, b=0),
                 yaxis=dict(autorange="reversed"),
                 **_CHART_THEME,
             )
@@ -695,7 +684,7 @@ def _render_analysis_panel() -> None:
                 pd.DataFrame(rows),
                 use_container_width=True,
                 hide_index=True,
-                height=340,
+                height=300,
                 column_config={"Score": st.column_config.NumberColumn(format="%.4f")},
             )
 
@@ -857,22 +846,21 @@ def main() -> None:
             st.session_state["view"] = "analysis"
 
     st.markdown(HEADER_HTML, unsafe_allow_html=True)
-    board_col, panel_col = st.columns([11, 8])
+    board_col, panel_col = st.columns([5, 4])
 
     with board_col:
         _render_board_area()
 
     with panel_col:
-        with st.container(height=700, border=False):
-            view = st.session_state.get("view", "build")
-            if view == "live":
-                _render_live_panel()
-            elif view == "analysis":
-                _render_analysis_panel()
-            elif view == "play":
-                _render_play_panel()
-            else:
-                _render_build_panel()
+        view = st.session_state.get("view", "build")
+        if view == "live":
+            _render_live_panel()
+        elif view == "analysis":
+            _render_analysis_panel()
+        elif view == "play":
+            _render_play_panel()
+        else:
+            _render_build_panel()
 
 
 if __name__ == "__main__":

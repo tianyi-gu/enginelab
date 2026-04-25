@@ -429,7 +429,6 @@ classDiagram
         +black_avg_nodes: float
         +white_avg_time: float
         +black_avg_time: float
-        +move_list: list
     }
 
     class LeaderboardRow {
@@ -614,7 +613,8 @@ sequenceDiagram
     participant Report as Markdown Report
 
     User->>Entry: Configure variant, features, depth, max moves
-    Entry->>Agents: Generate all nonempty feature-subset agents
+    Entry->>Agents: Generate agents (LLM-guided or stratified sampling)
+    Note over Agents: LLM mode: DeepSeek selects best 7 features via Ollama,<br/>then exhaustive 2^7-1=127 subsets.<br/>Standard mode: stratified sample up to max_agents.
     Agents-->>Entry: Agent list
     Entry->>Tournament: Run round-robin tournament
     loop for each ordered pair of agents
@@ -675,6 +675,73 @@ flowchart TD
     W --> X[Markdown Report]
     T --> Y[UI Tables/Charts]
 ```
+
+---
+
+# 4. LLM Feature Selection + Parallelized Tournament
+
+## 4.1 LLM Feature Selection Flow
+
+```mermaid
+flowchart TD
+    Start([generate_llm_selected_agents called]) --> Cache{Cache hit\nfor variant?}
+    Cache -->|Yes| Exhaustive
+    Cache -->|No| Prompt[Build prompt with 10 feature descriptions + variant]
+    Prompt --> Ollama[Call local DeepSeek via Ollama\nlocalhost:11434/v1]
+    Ollama --> Parse[Parse JSON response\nextract feature list]
+    Parse --> Validate{Exactly 7 valid\nfeature names?}
+    Validate -->|Yes| Save[Write to llm_feature_cache.json]
+    Validate -->|No| Fallback[Fallback: first 7 alphabetically]
+    Save --> Exhaustive[_exhaustive: all 2^7-1 = 127 subsets]
+    Fallback --> Exhaustive
+    Exhaustive --> Done([Return 127 FeatureSubsetAgents])
+```
+
+## 4.2 Parallel Tournament Execution
+
+```mermaid
+flowchart TD
+    Start([run_round_robin called]) --> Build[Build game_args list\nN x N-1 tuples with per-game seeds]
+    Build --> Check{on_game_complete\ncallback provided?}
+    Check -->|Yes - UI mode| Sequential[Sequential loop + tqdm\ncallback after each game]
+    Check -->|No - CLI mode| Parallel[ProcessPoolExecutor\nmax_workers = os.cpu_count]
+    Parallel --> Map[executor.map _run_game\norder preserved]
+    Map --> Collect[Collect results]
+    Sequential --> Done([Return list of GameResults])
+    Collect --> Done
+```
+
+## 4.3 LLM + Pipeline Sequence
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant CLI as main.py
+    participant Cache as llm_feature_cache.json
+    participant Ollama as DeepSeek via Ollama
+    participant Gen as _exhaustive
+    participant PPE as ProcessPoolExecutor
+    participant Game as play_game workers
+
+    User->>CLI: full-pipeline --use-llm --workers 8
+    CLI->>Cache: Check cache for variant
+    alt Cache miss
+        CLI->>Ollama: POST /v1/chat/completions
+        Ollama-->>CLI: 7 selected features
+        CLI->>Cache: Write selection
+    end
+    CLI->>Gen: _exhaustive(7 features)
+    Gen-->>CLI: 127 FeatureSubsetAgents
+    CLI->>PPE: executor.map(_run_game, 127x126 games)
+    par 8 parallel workers
+        PPE->>Game: play_game(white, black, seed+i)
+        Game-->>PPE: GameResult
+    end
+    PPE-->>CLI: list[15876 GameResults]
+    CLI-->>User: Leaderboard + report
+```
+
+---
 
 ## 3.6 Whole Project Package Diagram
 
@@ -740,13 +807,10 @@ classDiagram
     StreamlitApp --> GameResult
     StreamlitApp --> LeaderboardRow
 
-    FeatureSubsetAgent --> AlphaBetaEngine
-    RandomAgent --> GameResult
+    AlphaBetaEngine --> FeatureSubsetAgent
     AlphaBetaEngine --> Board
     AlphaBetaEngine --> Move
-    AlphaBetaEngine --> FeatureSubsetAgent
 
-    GameResult --> LeaderboardRow
     LeaderboardRow --> FeatureContributionRow
     LeaderboardRow --> SynergyRow
     GameResult --> ResultsIO

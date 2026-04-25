@@ -409,7 +409,7 @@ def _start_tournament() -> None:
     config = {
         "variant": variant,
         "selected_features": list(VARIANT_TOP_8_FEATURES.get(variant, ALL_FEATURES[:8])),
-        "depth": 2,
+        "depth": 1,
         "max_moves": 80,
         "seed": 42,
     }
@@ -577,7 +577,7 @@ def _render_build_panel() -> None:
     if os.path.exists(precomputed_path):
         n_games = _load_precomputed_count(precomputed_path)
         if n_games > 0:
-            st.caption(f"{n_games:,} games pre-computed (depth 2) · loads in ~3s")
+            st.caption(f"{n_games:,} games pre-computed · loads in ~3s")
         else:
             st.caption("Pre-computed results ready")
     else:

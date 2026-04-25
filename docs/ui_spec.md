@@ -1,124 +1,140 @@
-# EngineLab UI Spec v2 — Lichess-Style
+# EngineLab UI Spec v3 — React / Lovable Base
 
-## Concept
+## Tech Stack
 
-Single-page app. Lichess layout: large chess board permanently on the left,
-control/analysis panel on the right. User selects features to include in their
-engine, builds it (runs the tournament), sees what won and why, then plays
-against the best engine directly on the board.
+| Layer | Choice |
+|-------|--------|
+| Framework | React 19 + Vite |
+| Router | TanStack Router |
+| Styling | Tailwind CSS v4 + shadcn/ui |
+| Chess | chess.js (engine) + react-chessboard v5 (board) |
+| State | React `useState` / `useRef` — no external store |
+| Entry point | `webapp/` directory at repo root |
+
+Run with:
+```bash
+cd webapp
+npm install      # or: bun install
+npm run dev      # vite dev server → http://localhost:5173
+npm run build    # production build
+```
 
 ---
 
 ## Layout
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│  ♟ EngineLab                                                       │  ← top bar
-├──────────────────────────────┬─────────────────────────────────────┤
-│                              │                                     │
-│                              │         RIGHT PANEL                 │
-│        CHESS BOARD           │   (Build → Live → Analysis → Play) │
-│     (always visible)         │                                     │
-│                              │                                     │
-│                              │                                     │
-└──────────────────────────────┴─────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│  ♟ EngineLab                        ● Configure / Train / …   │  ← header
+├────────────────────────────────────┬───────────────────────────┤
+│                                    │                           │
+│         CHESS BOARD                │      RIGHT PANEL          │
+│   (always visible, responsive)     │  (changes by phase)       │
+│                                    │                           │
+│   + Training scoreboard below      │                           │
+│     (only during training phase)   │                           │
+│   + Move list below                │                           │
+│     (only during play phase)       │                           │
+└────────────────────────────────────┴───────────────────────────┘
 ```
 
-- **Left column (58%):** Chess board. Always shown. Reflects current mode.
-- **Right column (42%):** Panel. Changes based on `st.session_state["view"]`.
+- **Left column**: Chessboard (`react-chessboard`, max 560px, Lichess brown squares). Static in configure/training/analysis phases; interactive drag-and-drop in play phase.
+- **Right column (400px)**: Phase-controlled panel.
+- **Max width**: 1280px (`max-w-7xl`), centered.
 
 ---
 
-## Views (right panel states)
+## Phases (right panel states)
 
-### View 1 — Build  (`view = "build"`)
-Default view. Let the user compose their engine.
+### Phase 1 — Configure  (default)
 
-**Elements:**
-- Variant buttons: `Standard` | `Atomic` | `Antichess` (pill-style, one active)
-- Feature section header: "Select Features"
-- 10 feature checkboxes in a 2-column grid (default: all checked)
-- Quick presets row: `Quick` (3 features) · `Standard` (5) · `Full` (10)
-- Depth row: radio — `Fast (depth 1)` · `Normal (depth 2)` · `Deep (depth 3)`
-- Estimated agents + games (live caption, no slider)
-- `Build Engine` primary button (disabled if < 2 features selected)
-- `Load Demo` secondary button (loads mock data, skips to Analysis)
+**Right panel:**
+- Header: "Evaluation Features" + active-count badge
+- Depth selector: Fast (1) / Normal (2) / Deep (3) pill buttons
+- Agent count estimate: `N agents · K games`
+- Scrollable feature list (10 features): each has toggle (Switch) + weight slider (0.1–3×)
+- "Run Training Tournament" primary button (disabled if < 2 features active)
+- "How it works" explainer card below
 
-**Board (left):** Starting position, static. No interaction.
+**Board:** Starting position, static (no dragging).
 
 ---
 
-### View 2 — Live  (`view = "live"`)
-Shown while tournament is running.
+### Phase 2 — Training
 
-**Elements:**
-- Section: "Building…" with spinning indicator
-- Progress bar
-- `Games X / Y · Elapsed Ns · Est. Ns remaining`
-- Live top-5 leaderboard table (agent name, score rate, W/D/L)
-- `Cancel` button that sets running=False and returns to Build
+**Right panel:** Minimal — progress bar, agent count, note pointing to left column.
 
-**Board (left):** Starting position, static (live game data not available until engine is wired).
+**Left column (below board):**
+- Progress bar + game counter
+- Live leaderboard (top 8 agents, W/D/L/score, updates each game)
+- Game log (scrollable, last 30 results)
 
----
-
-### View 3 — Analysis  (`view = "analysis"`)
-Shown after tournament completes or demo data loaded.
-
-**Elements (scrollable):**
-- Success banner: "Tournament complete · N agents · N games · Xs"
-- Best engine card: name, score rate, W/D/L record, features used (tag pills)
-- `Play Against Best Engine ▶` prominent button → switches to Play view
-- Horizontal divider
-- **Feature Marginals** — compact horizontal bar chart (green/red, sorted)
-- **Synergy Pairs** — top-5 positive + top-5 negative pairs (two small bar charts side by side)
-- **Leaderboard** — dataframe, sortable, top 20 rows visible
-- Download row: Markdown report button + JSON results button
-- `Rebuild` text link → returns to Build view
-
-**Board (left):** Replays the sample game. Arrow controls embedded below board.
+**Board:** Starting position, static.
 
 ---
 
-### View 4 — Play  (`view = "play"`)
-User plays against the best engine on the board.
+### Phase 3 — Analysis  (auto-enters after training completes)
 
-**Elements (right panel):**
-- Header: `You (White) vs [Best Engine Name] (Black)`
-- Move list (PGN-style, scrollable, live-updating)
-- Status line: whose turn, check/checkmate, draw
-- `New Game` button · `Flip Board` toggle · `Resign` button
-- Feature contribution panel: shows which features the engine weighted most
-  on its last move (mock bar chart for now; live when engine is wired)
-- `← Back to Analysis` link
+**Right panel (scrollable):**
+- **Champion card** — name, score rate, W/D/L, feature pills, "Play vs [name]" primary button
+- **Feature Contributions** — horizontal bar chart (green = positive, red = negative), sorted by marginal win-rate impact
+- **Feature Synergy** — top-4 best pairs + top-4 worst pairs (percentage deltas)
+- **Leaderboard** — all agents ranked, score %, W/D/L
+- **Actions row** — "Export JSON" + "← Reconfigure" buttons
 
-**Board (left):**
-- Interactive. User clicks a piece → valid destination squares highlight.
-- After user move: engine responds (currently mock / random; real engine when Area 1 done).
-- Last move highlighted. Check square highlighted red.
-- Implemented via `st.components.v1.html()` chess component with JS→Python
-  move communication via URL query params or Streamlit component bidirectional API.
+**Board:** Showing starting position, static.
 
 ---
 
-## Board Component
+### Phase 4 — Play
 
-File: `ui/chess_viewer.py`
+**Right panel:**
+- Engine name (black) vs You (white) header
+- Status line (your move / engine thinking / checkmate / draw)
+- Engine feature pills
+- New Game + Back to Analysis buttons
 
-Two rendering modes:
+**Left column (below board):**
+- Move list (PGN-style pairs, scrollable)
 
-| Mode | Function | Description |
-|------|----------|-------------|
-| Static replay | `chess_game_viewer(moves, ...)` | Replays stored game, nav controls |
-| Interactive play | `chess_play_board(fen, on_move_key, ...)` | User drags pieces, posts move back |
+**Board:** Interactive. User drags white pieces. Engine plays black automatically with ~350ms delay.
 
-Colors: Lichess brown (`#b58863` / `#f0d9b5`). Pieces: chessboard.js Wikipedia set.
-Board size: fills left column width (responsive, `width: 100%`).
+---
 
-For interactive play, the component emits the user's move as a UCI string via a
-hidden Streamlit text input that the JS writes to via `window.parent.postMessage`
-or the Streamlit component `setValue` bridge. On each Streamlit rerun, the engine
-reads the new move, plays its reply, and re-renders the board.
+## Agent Generation
+
+Instead of hand-crafted variants, agents are generated as feature subsets — this enables proper marginal contribution analysis.
+
+For `n` selected features the tournament runs:
+
+| Subset type | Count | Purpose |
+|-------------|-------|---------|
+| Singletons | n | Isolates each feature's solo value |
+| Full set | 1 | Baseline with everything enabled |
+| Leave-one-out | n (if n ≥ 3) | Measures each feature's removal impact |
+| **Total** | **2n+1** (or n+1 if n<3) | |
+
+For 10 features: **21 agents → 420 games** (~5–10s at depth 1).
+
+Each agent uses the user's configured weights for its active features.
+
+---
+
+## Analysis Computations
+
+### Feature Marginals
+For each feature `f`:
+```
+marginal(f) = avg_score_rate(agents with f) − avg_score_rate(agents without f)
+```
+Displayed as sorted horizontal bar chart (green = positive contribution).
+
+### Synergy
+For each feature pair `(f_i, f_j)`:
+```
+synergy = avg_score_rate(both) − (avg_score_rate(f_i only) + avg_score_rate(f_j only)) / 2
+```
+Top-4 positive (best pairs) and top-4 negative (redundant/counterproductive) shown.
 
 ---
 
@@ -126,71 +142,13 @@ reads the new move, plays its reply, and re-renders the board.
 
 | Token | Value | Use |
 |-------|-------|-----|
-| `bg-page` | `#161512` | Page background |
-| `bg-panel` | `#1f1e1c` | Right panel background |
-| `bg-card` | `#272522` | Cards / sections |
-| `border` | `#3a3a38` | Subtle borders |
-| `text-primary` | `#bababa` | Main text |
-| `text-muted` | `#888` | Secondary text |
-| `accent-green` | `#629924` | Active state, primary button |
-| `accent-green-hover` | `#4e7a1b` | Button hover |
-| `board-dark` | `#b58863` | Dark squares |
-| `board-light` | `#f0d9b5` | Light squares |
-
----
-
-## No Sliders
-
-Sliders removed entirely. Replacements:
-- **Depth** → `st.radio` with labels "Fast (1)" / "Normal (2)" / "Deep (3)", horizontal
-- **Max moves** → fixed constant `80`
-- **Workers** → `min(4, os.cpu_count() or 1)` auto
-- **Seed** → fixed `42`
-
----
-
-## Session State Keys
-
-```python
-# Config
-"variant"             # "standard" | "atomic" | "antichess"
-"selected_features"   # list[str]
-"depth"               # 1 | 2 | 3
-
-# View routing
-"view"                # "build" | "live" | "analysis" | "play"
-
-# Runtime
-"running"             # bool
-"progress"            # float 0–1
-"games_completed"     # int
-"total_games"         # int
-"start_time"          # float | None
-"error"               # str | None
-
-# Results
-"results"             # list[GameResult] | None
-"agents"              # list[FeatureSubsetAgent] | None
-"leaderboard"         # list[LeaderboardRow] | None
-"marginals"           # list[FeatureContributionRow] | None
-"synergies"           # list[SynergyRow] | None
-"interpretation"      # str | None
-"report_md"           # str | None
-"config_snapshot"     # dict | None
-"duration_seconds"    # float | None
-
-# Game viewer (replay)
-"sample_game_moves"   # list[str] UCI | None
-"sample_game_white"   # str
-"sample_game_black"   # str
-"sample_game_result"  # str
-
-# Play mode
-"play_fen"            # str — current board FEN
-"play_moves"          # list[str] UCI — full game so far
-"play_status"         # "ongoing" | "checkmate" | "stalemate" | "draw"
-"play_flipped"        # bool
-```
+| `--background` | `oklch(0.16 0.005 90)` ≈ `#161512` | Page bg |
+| `--card` | `oklch(0.20 0.005 90)` | Card bg |
+| `--primary` | `oklch(0.68 0.17 130)` ≈ `#759900` | Lichess green |
+| `--border` | `oklch(0.30 0.005 90)` | Borders |
+| `--muted-foreground` | `oklch(0.68 0.005 90)` | Secondary text |
+| Board dark | `#b58863` | Dark squares |
+| Board light | `#f0d9b5` | Light squares |
 
 ---
 
@@ -198,11 +156,13 @@ Sliders removed entirely. Replacements:
 
 | File | Role |
 |------|------|
-| `ui/app.py` | Entry point; two-column layout; routes right panel by `view` |
-| `ui/chess_viewer.py` | Board HTML component (replay + play modes) |
-| `ui/mock_data.py` | Mock tournament data for demo / testing |
-| `ui/constants.py` | Features, display names, colors, session defaults |
-| `.streamlit/config.toml` | Lichess dark theme base |
+| `webapp/src/components/chess/ChessLab.tsx` | Single-file main component — all phases |
+| `webapp/src/lib/chess/engine.ts` | Alpha-beta negamax, `pickBestMove`, `playGame` |
+| `webapp/src/lib/chess/features.ts` | 10 feature definitions + PST tables + `makeEvaluator` |
+| `webapp/src/lib/chess/analysis.ts` | `computeMarginals`, `computeSynergies`, `generateAgentDefs` |
+| `webapp/src/routes/index.tsx` | TanStack route → renders `<ChessLab />` |
+| `webapp/src/styles.css` | Tailwind v4 + custom properties (Lichess palette) |
+| `webapp/src/components/ui/` | shadcn/ui component library |
 
 ---
 
@@ -210,26 +170,28 @@ Sliders removed entirely. Replacements:
 
 | # | Test |
 |---|------|
-| U1 | App loads at `streamlit run ui/app.py` with board visible and Build panel shown |
-| U2 | Variant buttons change active highlight immediately |
-| U3 | Feature checkboxes update agent/game count caption live |
-| U4 | Quick presets correctly set feature selection |
-| U5 | "Build Engine" disabled with < 2 features |
-| U6 | "Load Demo" populates Analysis view with mock data |
-| U7 | Analysis view shows marginals chart and leaderboard |
-| U8 | "Play Against Best Engine" transitions board to interactive play |
-| U9 | Board shows starting position and accepts clicks in Play mode |
-| U10 | Move list updates after each move in Play mode |
-| U11 | "New Game" resets the board in Play mode |
-| U12 | Running a real tournament (standard, depth 1, 3 features) completes and shows Analysis |
-| U13 | Download buttons produce valid files |
+| U1 | `npm run dev` starts without errors; board and Configure panel visible |
+| U2 | Enabling/disabling features updates agent count estimate live |
+| U3 | "Run Training Tournament" disabled when < 2 features active |
+| U4 | Training phase shows live leaderboard updating each game |
+| U5 | After training completes, analysis phase appears automatically |
+| U6 | Champion card shows correct name, score, features |
+| U7 | Feature marginals chart shows all active features sorted by impact |
+| U8 | Synergy section shows best/worst pairs |
+| U9 | "Export JSON" downloads valid JSON with leaderboard + marginals |
+| U10 | "Play vs [Champion]" switches to interactive board |
+| U11 | Player can drag white pieces; engine responds as black |
+| U12 | Game over (checkmate/draw) updates status correctly |
+| U13 | "New Game" resets the board |
+| U14 | "Back to Analysis" returns to analysis view |
+| U15 | "← Reconfigure" returns to configure phase |
 
 ---
 
-## Out of Scope
+## Out of Scope (v3)
 
-- Real engine response in Play mode (mock random move until Area 1 ships)
-- Atomic / Antichess interactive play (variant stubs raise NotImplementedError)
-- Cross-variant comparison tab
-- User accounts / saved results
-- Mobile layout
+- Atomic / Antichess variants (standard chess only)
+- Weight persistence across sessions
+- Multiplayer / user accounts
+- Mobile layout optimization
+- Server-side engine (all runs client-side in browser)

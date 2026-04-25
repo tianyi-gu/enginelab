@@ -43,33 +43,29 @@ _VIEWER_TEMPLATE = r"""<!DOCTYPE html>
     font-family: 'Helvetica Neue', Arial, sans-serif;
     font-size: 13px;
     display: flex;
-    justify-content: center;
-    padding: 10px 4px 4px;
+    flex-direction: column;
+    align-items: center;
+    padding: 6px 4px 4px;
   }
 
-  .wrapper {
-    display: flex;
-    gap: 14px;
-    width: 100%;
-  }
+  .board-wrap { width: 460px; }
 
-  .board-col { flex: 0 1 auto; min-width: 0; }
-
-  #board { width: 100%; }
+  #board { width: 460px; }
 
   .player-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 2px;
+    padding: 5px 2px;
     font-weight: 600;
+    width: 460px;
   }
   .pip {
-    width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+    width: 13px; height: 13px; border-radius: 50%; flex-shrink: 0;
   }
   .pip-white { background: #f0d9b5; border: 1px solid #aaa; }
   .pip-black { background: #272727; border: 1px solid #555; }
-  .player-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .player-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .board-b72b1 {
     border: 2px solid #3a3a38 !important;
@@ -80,7 +76,8 @@ _VIEWER_TEMPLATE = r"""<!DOCTYPE html>
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 0 0;
+    padding: 6px 0 6px;
+    width: 460px;
   }
   .ctrl-btn {
     background: #272522;
@@ -101,40 +98,17 @@ _VIEWER_TEMPLATE = r"""<!DOCTYPE html>
     color: #8b8580; font-size: 12px;
   }
 
-  .side-col {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    min-width: 0;
-  }
-
-  .status-card {
-    background: #272522;
-    border: 1px solid #3a3a38;
-    border-radius: 8px;
-    padding: 10px 13px;
-  }
-  .status-label {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: #8b8580;
-    margin-bottom: 3px;
-  }
-  #status-text { font-size: 13px; }
-
   .movelist-card {
     background: #272522;
     border: 1px solid #3a3a38;
-    border-radius: 8px;
-    padding: 10px 12px;
-    flex: 1;
+    border-radius: 6px;
+    padding: 8px 12px;
     overflow-y: auto;
     font-family: 'Courier New', monospace;
     font-size: 12.5px;
     line-height: 1.9;
-    max-height: __MOVELIST_HEIGHT__px;
+    max-height: 110px;
+    width: 460px;
   }
 
   .move-pair { display: flex; align-items: baseline; gap: 2px; }
@@ -162,36 +136,30 @@ _VIEWER_TEMPLATE = r"""<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div class="wrapper">
 
-  <!-- Board column -->
-  <div class="board-col">
-    <div class="player-row">
-      <span class="pip pip-black"></span>
-      <span class="player-name" id="black-name">Black</span>
-    </div>
+  <div class="player-row">
+    <span class="pip pip-black"></span>
+    <span class="player-name" id="black-name">Black</span>
+  </div>
+
+  <div class="board-wrap">
     <div id="board"></div>
-    <div class="player-row">
-      <span class="pip pip-white"></span>
-      <span class="player-name" id="white-name">White</span>
-    </div>
-    <div class="controls">
-      <button class="ctrl-btn" id="btn-first" title="First move (Home)"  onclick="goFirst()">&#9664;&#9664;</button>
-      <button class="ctrl-btn" id="btn-prev"  title="Previous move (&#8592;)" onclick="goPrev()">&#9664;</button>
-      <span   class="move-indicator" id="indicator">Start</span>
-      <button class="ctrl-btn" id="btn-next"  title="Next move (&#8594;)"     onclick="goNext()">&#9654;</button>
-      <button class="ctrl-btn" id="btn-last"  title="Last move (End)"   onclick="goLast()">&#9654;&#9654;</button>
-    </div>
   </div>
 
-  <!-- Side panel -->
-  <div class="side-col">
-    <div class="status-card">
-      <div class="status-label">Position</div>
-      <div id="status-text">Starting position</div>
-    </div>
-    <div class="movelist-card" id="movelist"></div>
+  <div class="player-row">
+    <span class="pip pip-white"></span>
+    <span class="player-name" id="white-name">White</span>
   </div>
+
+  <div class="controls">
+    <button class="ctrl-btn" id="btn-first" title="First"    onclick="goFirst()">&#9664;&#9664;</button>
+    <button class="ctrl-btn" id="btn-prev"  title="Previous" onclick="goPrev()">&#9664;</button>
+    <span   class="move-indicator" id="indicator">Start</span>
+    <button class="ctrl-btn" id="btn-next"  title="Next"     onclick="goNext()">&#9654;</button>
+    <button class="ctrl-btn" id="btn-last"  title="Last"     onclick="goLast()">&#9654;&#9654;</button>
+  </div>
+
+  <div class="movelist-card" id="movelist"></div>
 </div>
 
 <script>
@@ -221,9 +189,9 @@ var cursor = 0;
 var board = Chessboard('board', {
   position: 'start',
   pieceTheme: '__PIECE_THEME__',
+  boardWidth: 460,
   showNotation: true,
   draggable: false,
-  responsive: true,
 });
 
 // ── Move list HTML ───────────────────────────────────────────────────────────
@@ -256,16 +224,6 @@ function updateUI() {
     ind.textContent = 'Move ' + n + ' · ' + side;
   }
 
-  var st = document.getElementById('status-text');
-  if (cursor === fens.length-1 && RESULT) {
-    st.textContent = 'Game over · ' + RESULT;
-  } else {
-    var g2 = new Chess(fens[cursor]);
-    st.textContent = g2.turn() === 'w' ? 'White to move' : 'Black to move';
-    if (g2.in_check())     st.textContent += ' · Check!';
-    if (g2.in_checkmate()) st.textContent = 'Checkmate';
-    if (g2.in_stalemate()) st.textContent = 'Stalemate';
-  }
 
   document.querySelectorAll('.mv').forEach(function(b) {
     b.classList.toggle('active', parseInt(b.dataset.idx) === cursor);
@@ -319,19 +277,16 @@ def chess_game_viewer(
         board_size:  Unused (board is now responsive); kept for API compatibility.
         height:      Component iframe height in pixels.
     """
-    movelist_height = max(height - 210, 160)
-
     def _esc(s: str) -> str:
         return s.replace("\\", "\\\\").replace('"', '\\"')
 
     html = (
         _VIEWER_TEMPLATE
-        .replace("__UCI_MOVES__",       json.dumps(moves))
-        .replace("__WHITE_NAME__",      _esc(white_name))
-        .replace("__BLACK_NAME__",      _esc(black_name))
-        .replace("__RESULT__",          _esc(result))
-        .replace("__PIECE_THEME__",     _PIECE_THEME_URL)
-        .replace("__MOVELIST_HEIGHT__", str(movelist_height))
+        .replace("__UCI_MOVES__",   json.dumps(moves))
+        .replace("__WHITE_NAME__",  _esc(white_name))
+        .replace("__BLACK_NAME__",  _esc(black_name))
+        .replace("__RESULT__",      _esc(result))
+        .replace("__PIECE_THEME__", _PIECE_THEME_URL)
     )
     components.html(html, height=height, scrolling=False)
 
@@ -354,36 +309,27 @@ _PLAY_TEMPLATE = r"""<!DOCTYPE html>
         crossorigin="anonymous"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: #161512; color: #bababa; font-family: 'Inter', system-ui, sans-serif; padding: 8px; }
-.game { display: flex; gap: 14px; align-items: flex-start; }
-.board-side { flex: 0 0 auto; }
-.info-side { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.player-row { display: flex; align-items: center; gap: 7px; padding: 5px 0; font-size: 12.5px; font-weight: 600; color: #d0cfc8; }
-.dot { width: 11px; height: 11px; border-radius: 50%; }
+body { background: #161512; color: #bababa; font-family: 'Inter', system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 6px 4px 8px; }
+.player-row { display: flex; align-items: center; gap: 7px; padding: 5px 0; font-size: 12.5px; font-weight: 600; color: #d0cfc8; width: 460px; }
+.dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
 .dot-black { background: #1a1a1a; border: 1px solid #555; }
 .dot-white { background: #f0d9b5; border: 1px solid #aaa; }
-#board { width: 100%; }
+#board { width: 460px; }
 .board-b72b1 { border: 2px solid #2c2b29 !important; border-radius: 2px; }
-.status-box { background: #272522; border: 1px solid #3a3a38; border-radius: 5px; padding: 7px 10px; }
-.status-lbl { font-size: 9px; color: #7a7775; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 2px; }
+.status-row { display: flex; align-items: center; justify-content: space-between; width: 460px; padding: 5px 0 3px; }
 #status { font-size: 13px; font-weight: 600; }
 .your-turn { color: #629924 !important; }
 .thinking { color: #7a7775 !important; font-style: italic; }
 .check { color: #e67e22 !important; }
 .checkmate { color: #c84b4b !important; }
 .draw { color: #7a7775 !important; }
-.movelist { background: #1f1e1c; border: 1px solid #3a3a38; border-radius: 5px; padding: 7px 9px; overflow-y: auto; max-height: 200px; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.85; flex: 1; }
+.movelist { background: #1f1e1c; border: 1px solid #3a3a38; border-radius: 5px; padding: 6px 9px; overflow-y: auto; max-height: 90px; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.85; width: 460px; }
 .mp { display: flex; gap: 2px; align-items: baseline; }
 .mn { color: #6a7068; min-width: 20px; font-size: 11px; }
 .mw, .mb { padding: 0 4px; border-radius: 2px; color: #c9d1d9; cursor: default; }
 .cur { background: #629924 !important; color: #fff !important; font-weight: 700; }
-.feat-box { background: #1f1e1c; border: 1px solid #3a3a38; border-radius: 5px; padding: 7px 9px; }
-.feat-lbl { font-size: 9px; color: #7a7775; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 5px; }
-.controls { display: flex; gap: 6px; }
-.btn { flex: 1; padding: 5px 8px; border-radius: 4px; border: 1px solid #3a3a38; background: #272522; color: #bababa; cursor: pointer; font-size: 12px; font-family: inherit; transition: all 0.1s; }
-.btn:hover { background: #3a3a38; border-color: #629924; color: #d0cfc8; }
-.btn-primary { background: #629924 !important; border-color: #629924 !important; color: #fff !important; font-weight: 600 !important; }
-.btn-primary:hover { background: #4e7a1b !important; }
+.btn-new { margin-top: 6px; width: 460px; padding: 7px 0; border-radius: 4px; border: none; background: #629924; color: #fff; font-weight: 600; font-size: 13px; cursor: pointer; font-family: inherit; }
+.btn-new:hover { background: #4e7a1b; }
 #promo-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 999; justify-content: center; align-items: center; }
 #promo-modal.show { display: flex; }
 .promo-opts { background: #272522; border: 1px solid #3a3a38; border-radius: 8px; padding: 16px 20px; display: flex; gap: 10px; }
@@ -403,45 +349,27 @@ body { background: #161512; color: #bababa; font-family: 'Inter', system-ui, san
   </div>
 </div>
 
-<div class="game">
-
-  <!-- Board side -->
-  <div class="board-side">
-    <div class="player-row">
-      <span class="dot dot-black"></span>
-      <span id="engine-name-top">__ENGINE_NAME__</span>
-    </div>
-    <div id="board"></div>
-    <div class="player-row">
-      <span class="dot dot-white"></span>
-      <span>You</span>
-    </div>
-  </div>
-
-  <!-- Info side -->
-  <div class="info-side">
-
-    <div class="status-box">
-      <div class="status-lbl">Status</div>
-      <div id="status" class="your-turn">Your turn (White)</div>
-    </div>
-
-    <div class="movelist" id="movelist">
-      <span style="color:#6a7068;font-size:11px">No moves yet</span>
-    </div>
-
-    <div class="feat-box">
-      <div class="feat-lbl">Engine features</div>
-      <div id="feat-content">__FEATURE_PILLS_HTML__</div>
-    </div>
-
-    <div class="controls">
-      <button class="btn btn-primary" onclick="newGame()">New Game</button>
-      <button class="btn" onclick="flipBoard()">Flip</button>
-    </div>
-
-  </div>
+<div class="player-row">
+  <span class="dot dot-black"></span>
+  <span id="engine-name-top">__ENGINE_NAME__</span>
 </div>
+
+<div id="board"></div>
+
+<div class="player-row">
+  <span class="dot dot-white"></span>
+  <span>You (White)</span>
+</div>
+
+<div class="status-row">
+  <div id="status" class="your-turn">Your turn</div>
+</div>
+
+<div class="movelist" id="movelist">
+  <span style="color:#6a7068;font-size:11px">No moves yet</span>
+</div>
+
+<button class="btn-new" onclick="newGame()">New Game</button>
 
 <script>
 var game = new Chess();
@@ -451,12 +379,11 @@ var board = Chessboard('board', {
   draggable: true,
   position: 'start',
   pieceTheme: '__PIECE_THEME__',
+  boardWidth: 460,
   onDragStart: onDragStart,
   onDrop: onDrop,
   onSnapEnd: function() { board.position(game.fen()); },
 });
-
-$(window).resize(function() { board.resize(); });
 
 // ── Drag start guard ────────────────────────────────────────────────────────
 function onDragStart(source, piece) {
@@ -581,7 +508,7 @@ function updateStatus() {
   }
 }
 
-// ── New game / flip ───────────────────────────────────────────────────────────
+// ── New game ──────────────────────────────────────────────────────────────────
 function newGame() {
   game.reset();
   board.start(true);
@@ -589,10 +516,6 @@ function newGame() {
   document.getElementById('promo-modal').classList.remove('show');
   updateMoveList();
   setStatus('your-turn', 'Your turn (White)');
-}
-
-function flipBoard() {
-  board.flip();
 }
 </script>
 </body>

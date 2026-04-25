@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import sys
-import threading
 import time
 import random
 
@@ -230,8 +229,8 @@ def _feature_pills(features: tuple | list) -> str:
     for f in features:
         label = FEATURE_DISPLAY_NAMES.get(f, f)
         pills.append(
-            f'<span style="background:#252320;border:1px solid #4a4845;'
-            f'color:#c8c4bc;border-radius:3px;padding:2px 7px;'
+            f'<span style="background:#2a2827;border:1px solid #555452;'
+            f'color:#d8d5d0;border-radius:3px;padding:2px 7px;'
             f'font-size:11px;margin:2px;">{label}</span>'
         )
     return " ".join(pills)
@@ -247,33 +246,6 @@ def _est_agents_games(features: list[str]) -> tuple[int, int]:
 # ---------------------------------------------------------------------------
 # Tournament thread
 # ---------------------------------------------------------------------------
-
-def _run_tournament(config: dict) -> None:
-    try:
-        from ui.mock_data import generate_mock_session_state
-
-        st.session_state["start_time"] = time.time()
-        n_steps = 18
-        fake_total = max(50, len(st.session_state.get("agents") or []) * 6)
-        st.session_state["total_games"] = fake_total
-
-        for i in range(n_steps):
-            time.sleep(0.28)
-            done = int((i + 1) / n_steps * fake_total)
-            st.session_state["games_completed"] = done
-            st.session_state["progress"] = (i + 1) / n_steps
-
-        mock = generate_mock_session_state(seed=config.get("seed", 42))
-        mock["duration_seconds"] = round(time.time() - st.session_state["start_time"], 1)
-        mock["config_snapshot"] = config
-        mock["view"] = "analysis"
-        st.session_state.update(mock)
-    except Exception as exc:
-        import traceback
-        st.session_state["error"] = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
-    finally:
-        st.session_state["running"] = False
-
 
 def _start_tournament() -> None:
     config = {
@@ -294,8 +266,9 @@ def _start_tournament() -> None:
         games_completed=0, progress=0.0,
         total_games=n_agents * max(n_agents - 1, 0),
         agents=[],
+        start_time=time.time(),
+        _tournament_config=config,
     )
-    threading.Thread(target=_run_tournament, args=(config,), daemon=True).start()
     st.rerun()
 
 
@@ -336,19 +309,16 @@ def _render_board_area() -> None:
             black = _agent_short_name(st.session_state.get("sample_game_black", "Black"))
             result = st.session_state.get("sample_game_result", "")
             chess_game_viewer(moves=moves, white_name=white, black_name=black,
-                              result=result, board_size=_BOARD_PX, height=_BOARD_PX + 90)
+                              result=result, board_size=_BOARD_PX, height=680)
             return
 
     if view == "play":
         from ui.chess_viewer import chess_play_interactive
         lb = st.session_state.get("leaderboard") or []
         engine_name = _agent_short_name(lb[0].agent_name) if lb else "Best Engine"
-        engine_features = list(lb[0].features) if lb else []
-        features_html = _feature_pills(engine_features)
         chess_play_interactive(
             engine_name=engine_name,
-            engine_features_html=features_html,
-            height=540,
+            height=640,
         )
         return
 
@@ -425,57 +395,47 @@ def _render_build_panel() -> None:
 # Live panel
 # ---------------------------------------------------------------------------
 
+_FAKE_BUILD_DURATION = 5.0
+
+
 def _render_live_panel() -> None:
-    snap = st.session_state.get("config_snapshot") or {}
-    variant = snap.get("variant", st.session_state.get("variant", "standard"))
-    n_agents = len(st.session_state.get("agents") or [])
+    config = st.session_state.get("_tournament_config") or {}
+    variant = config.get("variant", st.session_state.get("variant", "standard"))
     total = st.session_state.get("total_games", 0)
-    done = st.session_state.get("games_completed", 0)
-    progress = st.session_state.get("progress", 0.0)
     start = st.session_state.get("start_time") or time.time()
     elapsed = time.time() - start
-    remaining = (elapsed / progress - elapsed) if progress > 0.01 else 0.0
 
-    with st.spinner("Building…"):
-        st.markdown("### Building…")
-        st.progress(progress)
-        st.caption(
-            f"Games **{done}** / **{total}**  ·  "
-            f"Elapsed: **{elapsed:.0f}s**  ·  "
-            f"Est. remaining: **{remaining:.0f}s**"
-        )
-        st.caption(f"Variant: **{variant.title()}** · **{n_agents}** agents")
+    # When time is up, load mock results and switch to analysis — all in main thread
+    if elapsed >= _FAKE_BUILD_DURATION:
+        from ui.mock_data import generate_mock_session_state
+        mock = generate_mock_session_state(seed=config.get("seed", 42))
+        mock["duration_seconds"] = round(elapsed, 1)
+        mock["config_snapshot"] = config
+        st.session_state.update(mock)
+        st.session_state["running"] = False
+        st.session_state["view"] = "analysis"
+        st.rerun()
+        return
 
-        st.divider()
+    progress = elapsed / _FAKE_BUILD_DURATION
+    done = int(progress * total)
+    remaining = max(_FAKE_BUILD_DURATION - elapsed, 0.0)
 
-        lb = st.session_state.get("leaderboard")
-        if lb:
-            st.markdown("**Top 5 so far**")
-            top5 = [
-                {
-                    "Agent": _agent_short_name(r.agent_name)[:40],
-                    "Score Rate": round(r.score_rate, 4),
-                    "W": r.wins,
-                    "D": r.draws,
-                    "L": r.losses,
-                }
-                for r in lb[:5]
-            ]
-            st.dataframe(
-                pd.DataFrame(top5),
-                use_container_width=True,
-                hide_index=True,
-                column_config={"Score Rate": st.column_config.NumberColumn(format="%.4f")},
-            )
-        else:
-            st.info("Waiting for first results…")
+    st.markdown("### Building…")
+    st.progress(progress)
+    st.caption(
+        f"Games **{done}** / **{total}**  ·  "
+        f"Elapsed: **{elapsed:.0f}s**  ·  "
+        f"Est. remaining: **{remaining:.0f}s**"
+    )
+    st.caption(f"Variant: **{variant.title()}**")
 
-        if st.button("Cancel", use_container_width=True):
-            st.session_state["running"] = False
-            st.session_state["view"] = "build"
-            st.rerun()
+    if st.button("Cancel", use_container_width=True):
+        st.session_state["running"] = False
+        st.session_state["view"] = "build"
+        st.rerun()
 
-    time.sleep(2)
+    time.sleep(0.3)
     st.rerun()
 
 
@@ -720,11 +680,6 @@ def main() -> None:
             st.session_state["view"] = "build"
             st.rerun()
         return
-
-    # Auto-transition: if running flag dropped but view is still "live", push to analysis
-    if not st.session_state.get("running") and st.session_state.get("view") == "live":
-        if st.session_state.get("leaderboard") is not None:
-            st.session_state["view"] = "analysis"
 
     st.markdown(HEADER_HTML, unsafe_allow_html=True)
     board_col, panel_col = st.columns([5, 4])

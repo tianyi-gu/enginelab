@@ -10,6 +10,10 @@ from core.move import Move
 from variants.standard import apply_standard_move, generate_standard_moves
 from variants.atomic import apply_atomic_move, generate_atomic_moves
 from variants.antichess import apply_antichess_move, generate_antichess_moves
+from variants.king_of_the_hill import apply_koth_move, generate_koth_moves
+from variants.three_check import apply_three_check_move, generate_three_check_moves
+from variants.chess960 import apply_chess960_move, generate_chess960_moves
+from variants.horde import apply_horde_move, generate_horde_moves
 
 
 VARIANT_DISPATCH: dict[str, dict[str, Callable]] = {
@@ -24,6 +28,22 @@ VARIANT_DISPATCH: dict[str, dict[str, Callable]] = {
     "antichess": {
         "apply_move": apply_antichess_move,
         "generate_legal_moves": generate_antichess_moves,
+    },
+    "kingofthehill": {
+        "apply_move": apply_koth_move,
+        "generate_legal_moves": generate_koth_moves,
+    },
+    "threecheck": {
+        "apply_move": apply_three_check_move,
+        "generate_legal_moves": generate_three_check_moves,
+    },
+    "chess960": {
+        "apply_move": apply_chess960_move,
+        "generate_legal_moves": generate_chess960_moves,
+    },
+    "horde": {
+        "apply_move": apply_horde_move,
+        "generate_legal_moves": generate_horde_moves,
     },
 }
 

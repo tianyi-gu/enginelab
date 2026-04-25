@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
+import threading
 import time
 from functools import lru_cache
 
@@ -34,7 +36,9 @@ from ui.play_engine import (
 # Real backend imports
 from agents.feature_subset_agent import FeatureSubsetAgent
 from tournament.leaderboard import compute_leaderboard
-from tournament.results_io import load_results_json
+from tournament.results_io import load_results_json, save_results_json
+from agents.generate_agents import generate_feature_subset_agents
+from tournament.round_robin import run_round_robin
 from analysis.feature_marginals import compute_feature_marginals
 from analysis.synergy import compute_pairwise_synergies
 from analysis.interpretation import generate_interpretation
@@ -65,7 +69,8 @@ def _cached_load_results(path: str) -> list:
 
 def _normalize_variant(label: str) -> str:
     """Map a variant label (e.g. 'atomic_d3') to the base variant ('atomic')."""
-    if label in _KNOWN_VARIANTS:
+    from variants.base import VARIANT_DISPATCH
+    if label in _KNOWN_VARIANTS or label in VARIANT_DISPATCH:
         return label
     for v in sorted(_KNOWN_VARIANTS, key=len, reverse=True):
         if label.startswith(v):
@@ -322,7 +327,101 @@ def _build_analysis(results: list, config: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Tournament start — just sets view="live" and stores config, no thread
+# Custom variant generation (Ollama LLM)
+# ---------------------------------------------------------------------------
+
+def _generate_custom_variant(description: str) -> None:
+    """Generate, validate, and register a custom variant from a text description."""
+    from variants.llm_generate import generate_variant_code
+    from variants.dynamic_loader import load_variant_from_code, validate_variant, register_variant
+
+    st.session_state["custom_variant_status"] = "generating"
+    st.session_state["custom_variant_error"] = None
+
+    # Step 1: Call Ollama
+    result = generate_variant_code(description)
+    if result.get("error"):
+        st.session_state["custom_variant_status"] = "error"
+        st.session_state["custom_variant_error"] = result["error"]
+        st.rerun()
+        return
+
+    code = result["code"]
+    st.session_state["custom_variant_code"] = code
+    st.session_state["custom_variant_status"] = "validating"
+
+    # Step 2: Load the code
+    load_result = load_variant_from_code(code)
+    if load_result.get("error"):
+        st.session_state["custom_variant_status"] = "error"
+        st.session_state["custom_variant_error"] = f"Code loading failed: {load_result['error']}"
+        st.rerun()
+        return
+
+    # Step 3: Validate with test games
+    val_result = validate_variant(load_result["apply_move"], load_result["generate_legal_moves"])
+    if not val_result["valid"]:
+        st.session_state["custom_variant_status"] = "error"
+        st.session_state["custom_variant_error"] = f"Validation failed: {val_result['error']}"
+        st.rerun()
+        return
+
+    # Step 4: Register and select
+    variant_name = "customvariant"
+    register_variant(variant_name, load_result["apply_move"], load_result["generate_legal_moves"])
+
+    st.session_state["custom_variant_name"] = variant_name
+    st.session_state["custom_variant_status"] = "ready"
+    st.session_state["variant"] = variant_name
+    st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Live tournament thread (for custom variants without pre-computed data)
+# ---------------------------------------------------------------------------
+
+_tournament_lock = threading.Lock()
+
+
+def _run_live_tournament_thread(config: dict) -> None:
+    """Run a real tournament in a background thread."""
+    try:
+        variant = config["variant"]
+        features = config["selected_features"]
+        depth = config.get("depth", 2)
+        max_moves = config.get("max_moves", 80)
+        seed = config.get("seed", 42)
+
+        agents = generate_feature_subset_agents(features, seed=seed)
+
+        def on_game_complete(result):
+            with _tournament_lock:
+                results = st.session_state.get("results") or []
+                results.append(result)
+                st.session_state["results"] = results
+                st.session_state["games_completed"] = len(results)
+
+        results = run_round_robin(
+            agents=agents,
+            variant=variant,
+            depth=depth,
+            max_moves=max_moves,
+            base_seed=seed,
+            on_game_complete=on_game_complete,
+        )
+
+        analysis = _build_analysis(results, config)
+        with _tournament_lock:
+            st.session_state.update(**analysis, running=False)
+
+    except Exception as exc:
+        with _tournament_lock:
+            st.session_state["error"] = str(exc)
+            st.session_state["running"] = False
+
+
+# ---------------------------------------------------------------------------
+# Tournament start — dual path: pre-computed or live
 # ---------------------------------------------------------------------------
 
 def _start_tournament() -> None:
@@ -338,23 +437,38 @@ def _start_tournament() -> None:
     data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", "data")
     precomputed_path = os.path.join(data_dir, f"tournament_results_{variant}.json")
 
-    if not os.path.exists(precomputed_path):
-        st.session_state["error"] = f"No pre-computed results found for '{variant}'."
-        return
-
-    # Warm the cache on the main thread (file read ~2ms)
-    _cached_load_results(precomputed_path)
-
     for k in ["results", "agents", "leaderboard", "marginals", "synergies",
               "interpretation", "report_md", "config_snapshot", "duration_seconds", "error"]:
         st.session_state[k] = None
 
-    st.session_state.update(
-        running=True,
-        view="live",
-        _tournament_config=config,
-        _precomputed_path=precomputed_path,
-    )
+    if os.path.exists(precomputed_path):
+        # Pre-computed path (built-in variants with cached data)
+        _cached_load_results(precomputed_path)
+        st.session_state.update(
+            running=True,
+            view="live",
+            _tournament_config=config,
+            _precomputed_path=precomputed_path,
+        )
+    else:
+        # Live tournament path (custom variants or variants without pre-computed data)
+        agents = generate_feature_subset_agents(config["selected_features"], seed=config["seed"])
+        total = len(agents) * (len(agents) - 1)
+        st.session_state.update(
+            running=True,
+            view="live",
+            results=[],
+            agents=[a.name for a in agents],
+            games_completed=0,
+            total_games=total,
+            _tournament_config=config,
+            _precomputed_path="",
+        )
+        thread = threading.Thread(
+            target=_run_live_tournament_thread, args=(config,), daemon=True
+        )
+        thread.start()
+
     st.rerun()
 
 
@@ -479,12 +593,37 @@ def _render_build_panel() -> None:
 
     # Variant selector
     st.caption("VARIANT")
-    v_cols = st.columns(3)
-    for col, v in zip(v_cols, ["standard", "atomic", "antichess"]):
+    _ALL_VARIANTS = [
+        "standard", "atomic", "antichess",
+        "kingofthehill", "threecheck", "chess960", "horde",
+    ]
+    _VARIANT_LABELS = {
+        "standard": "Standard", "atomic": "Atomic", "antichess": "Antichess",
+        "kingofthehill": "KotH", "threecheck": "3-Check",
+        "chess960": "960", "horde": "Horde",
+    }
+    v_row1 = st.columns(3)
+    for col, v in zip(v_row1, _ALL_VARIANTS[:3]):
         active = variant == v
-        label = ("✓ " if active else "") + v.title()
+        label = ("✓ " if active else "") + _VARIANT_LABELS[v]
         if col.button(label, key=f"v_{v}", use_container_width=True):
             st.session_state["variant"] = v
+            st.rerun()
+    v_row2 = st.columns(4)
+    for col, v in zip(v_row2, _ALL_VARIANTS[3:]):
+        active = variant == v
+        label = ("✓ " if active else "") + _VARIANT_LABELS[v]
+        if col.button(label, key=f"v_{v}", use_container_width=True):
+            st.session_state["variant"] = v
+            st.rerun()
+
+    # Show custom variant button if one is ready
+    if st.session_state.get("custom_variant_status") == "ready":
+        custom_name = st.session_state.get("custom_variant_name", "customvariant")
+        active = variant == custom_name
+        label = ("✓ " if active else "") + "Custom"
+        if st.button(label, key="v_custom", use_container_width=True):
+            st.session_state["variant"] = custom_name
             st.rerun()
 
     variant_desc = VARIANT_DESCRIPTIONS.get(variant, "")
@@ -506,19 +645,58 @@ def _render_build_panel() -> None:
             st.caption(f"{n_games:,} games computed")
         else:
             st.caption("Results ready")
-    else:
-        st.caption("No pre-computed results found for this variant.")
+    elif variant not in ("customvariant",):
+        st.caption("No pre-computed data — will run live tournament.")
 
     st.markdown('<div style="margin-top:14px;"></div>', unsafe_allow_html=True)
 
+    # Build Engine button — enabled for pre-computed OR live-capable variants
     has_data = os.path.exists(precomputed_path)
+    is_custom_ready = (variant == "customvariant"
+                       and st.session_state.get("custom_variant_status") == "ready")
+    can_build = has_data or is_custom_ready or variant in _ALL_VARIANTS
     if not st.session_state.get("running", False):
-        if st.button("Build Engine", type="primary", use_container_width=True, disabled=not has_data):
+        if st.button("Build Engine", type="primary", use_container_width=True, disabled=not can_build):
             _start_tournament()
 
     if st.session_state.get("error"):
         st.error(st.session_state["error"])
         st.session_state["error"] = None
+
+    # Custom variant generator
+    st.markdown("---")
+    st.markdown("### Generate Custom Variant")
+    st.caption("Describe any variant in natural language and AI will generate the rules")
+    description = st.text_area(
+        "Variant description",
+        value=st.session_state.get("custom_variant_description", ""),
+        placeholder="e.g., Chess but pawns can move backwards, and capturing a knight removes all pieces in that row",
+        height=100,
+        key="custom_variant_input",
+        label_visibility="collapsed",
+    )
+    st.session_state["custom_variant_description"] = description
+
+    generating = st.session_state.get("custom_variant_status") == "generating"
+    if st.button(
+        "Generate Variant",
+        disabled=not description.strip() or generating,
+        use_container_width=True,
+        key="gen_variant_btn",
+    ):
+        _generate_custom_variant(description)
+
+    cv_status = st.session_state.get("custom_variant_status")
+    if cv_status == "generating":
+        st.info("Generating variant code from description...")
+    elif cv_status == "validating":
+        st.info("Validating generated code with test games...")
+    elif cv_status == "ready":
+        st.success("Custom variant ready!")
+        with st.expander("View generated code"):
+            st.code(st.session_state.get("custom_variant_code", ""), language="python")
+    elif cv_status == "error":
+        st.error(f"Generation failed: {st.session_state.get('custom_variant_error', 'Unknown error')}")
 
 
 # ---------------------------------------------------------------------------
@@ -526,11 +704,10 @@ def _render_build_panel() -> None:
 # ---------------------------------------------------------------------------
 
 def _render_live_panel(board_ph=None) -> None:
-    """Animate fake tournament progress inline — no threads, no polling.
+    """Animate tournament progress — pre-computed (fake) or live (real thread).
 
-    All data is precomputed (<3ms to load). We run a step loop with
-    st.empty() placeholders to simulate a live game feed, then immediately
-    store results and switch to the analysis view.
+    Pre-computed path: replays cached data with a ~10s animation.
+    Live path: polls background thread for real progress.
 
     If board_ph is provided, also animates a sample game's moves on the
     board placeholder at high speed.
@@ -539,7 +716,12 @@ def _render_live_panel(board_ph=None) -> None:
     variant = config.get("variant", st.session_state.get("variant", "standard"))
     precomputed_path = st.session_state.get("_precomputed_path", "")
 
-    if not precomputed_path or not os.path.exists(precomputed_path):
+    # Live tournament path (no pre-computed data)
+    if not precomputed_path:
+        _render_live_panel_polling()
+        return
+
+    if not os.path.exists(precomputed_path):
         st.session_state["view"] = "build"
         st.rerun()
         return
@@ -675,6 +857,43 @@ def _render_live_panel(board_ph=None) -> None:
         duration_seconds=total / 38,  # plausible elapsed time label
     )
     st.rerun()
+
+
+def _render_live_panel_polling() -> None:
+    """Poll a background tournament thread for real progress."""
+    config = st.session_state.get("_tournament_config") or {}
+    variant = config.get("variant", st.session_state.get("variant", "standard"))
+
+    st.markdown(f"### Running {variant.title()} Tournament (live)")
+    progress_ph = st.empty()
+    caption_ph = st.empty()
+
+    with _tournament_lock:
+        running = st.session_state.get("running", False)
+        done = st.session_state.get("games_completed", 0)
+        total = st.session_state.get("total_games", 1)
+        error = st.session_state.get("error")
+
+    if error:
+        st.error(error)
+        st.session_state["view"] = "build"
+        st.session_state["running"] = False
+        return
+
+    frac = min(done / max(total, 1), 1.0)
+    progress_ph.progress(frac)
+    caption_ph.caption(f"**{done}** / **{total}** games  ·  **{frac * 100:.0f}%**")
+
+    if not running and done > 0:
+        # Tournament finished — switch to analysis
+        st.session_state["view"] = "analysis"
+        st.rerun()
+    elif running:
+        time.sleep(1.0)
+        st.rerun()
+    else:
+        st.session_state["view"] = "build"
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------

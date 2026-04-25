@@ -43,12 +43,32 @@ VARIANT_TOP_8_FEATURES: dict[str, list[str]] = {
         "negative_material", "center_control", "mobility", "enemy_king_danger",
         "pawn_structure", "material", "piece_position", "king_safety",
     ],
+    "kingofthehill": [
+        "material", "center_control", "king_safety", "mobility",
+        "piece_position", "enemy_king_danger", "capture_threats", "pawn_structure",
+    ],
+    "threecheck": [
+        "enemy_king_danger", "capture_threats", "mobility", "king_safety",
+        "material", "center_control", "piece_position", "pawn_structure",
+    ],
+    "chess960": [
+        "material", "mobility", "king_safety", "enemy_king_danger",
+        "capture_threats", "center_control", "piece_position", "pawn_structure",
+    ],
+    "horde": [
+        "material", "pawn_structure", "center_control", "mobility",
+        "piece_position", "capture_threats", "king_safety", "enemy_king_danger",
+    ],
 }
 
 VARIANT_DESCRIPTIONS: dict[str, str] = {
     "standard": "Win by checkmating the king. Material and mobility dominate.",
     "atomic": "Captures cause explosions. King danger and explosion threats dominate.",
     "antichess": "Lose all your pieces to win. Material is a liability.",
+    "kingofthehill": "Move your king to the center (d4/d5/e4/e5) to win.",
+    "threecheck": "Deliver three checks to win. Aggressive play rewarded.",
+    "chess960": "Randomized starting position. No opening theory advantage.",
+    "horde": "White has 36 pawns, no king. Black must capture them all.",
 }
 
 # Colors (matches .streamlit/config.toml)
@@ -90,4 +110,9 @@ SESSION_DEFAULTS: dict = {
     "play_exploded_squares": None,
     "play_flipped": False,
     "live_feed": [],
+    "custom_variant_description": "",
+    "custom_variant_code": None,
+    "custom_variant_status": None,
+    "custom_variant_error": None,
+    "custom_variant_name": None,
 }

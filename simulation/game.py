@@ -67,7 +67,14 @@ def play_game(
     Supports FeatureSubsetAgent (uses AlphaBetaEngine) and RandomAgent.
     Returns a GameResult with outcome and statistics.
     """
-    board = Board.starting_position()
+    if variant == "chess960":
+        from variants.chess960 import chess960_starting_position
+        board = chess960_starting_position(seed if seed is not None else 0)
+    elif variant == "horde":
+        from variants.horde import horde_starting_position
+        board = horde_starting_position()
+    else:
+        board = Board.starting_position()
     apply_fn = get_apply_move(variant)
     gen_legal_fn = get_generate_legal_moves(variant)
 
@@ -134,7 +141,7 @@ def play_game(
                 black_agent=black_agent.name,
                 winner=board.winner,
                 moves=ply + 1,
-                termination_reason="king_exploded" if board.winner else "stalemate",
+                termination_reason="variant_win" if board.winner else "stalemate",
                 white_avg_nodes=_avg(white_nodes),
                 black_avg_nodes=_avg(black_nodes),
                 white_avg_time=_avg(white_times),

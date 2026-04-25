@@ -16,6 +16,7 @@ class Board:
             "K": True, "Q": True, "k": True, "q": True,
         }
         self.en_passant_square: Square | None = None
+        self.check_count: dict[str, int] = {"w": 0, "b": 0}
 
     @staticmethod
     def starting_position() -> "Board":
@@ -43,6 +44,7 @@ class Board:
         new_board.move_count = self.move_count
         new_board.castling_rights = dict(self.castling_rights)
         new_board.en_passant_square = self.en_passant_square
+        new_board.check_count = dict(self.check_count)
         return new_board
 
     def get_piece(self, square: Square) -> str | None:

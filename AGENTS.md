@@ -15,13 +15,38 @@ Before any implementation:
 
 ---
 
+## Repo organization
+
+```
+project-root/
+├── AGENTS.md          # Agent rules (this file)
+├── NOTES.md           # Living log of decisions and problems
+├── README.md          # Project overview
+├── SPEC.md            # Requirements & acceptance criteria (create before coding)
+├── .gitignore
+├── src/               # All source code
+│   └── <module>/
+├── tests/             # Mirrors src/ structure exactly
+├── docs/              # Interfaces, diagrams, ADRs
+│   └── interfaces.md
+└── scripts/           # One-off scripts; not part of the importable module
+```
+
+Rules:
+- No source files at the repo root.
+- `tests/` mirrors `src/` — `src/foo/bar.py` → `tests/foo/test_bar.py`.
+- `scripts/` is for throwaway or run-once code; don't import from it.
+- Data files, model weights, and large binaries go in `.gitignore`, not the repo.
+
+---
+
 ## Operating principles
 
 - **Plan before coding.** Output 3–6 bullets: files to touch, what to write, what to test. No code in the plan.
 - **Tests first.** Write a failing test, confirm it fails for the right reason, then implement.
 - **Smallest change that works.** No premature abstractions, no refactoring adjacent code.
 - **Fail loudly.** Raise specific exceptions. Never swallow errors or return defaults to hide failure.
-- **Pure by default.** Don't mutate inputs unless the function name says so (`apply_*`, `update_*`).
+- **Pure by default.** Don't mutate inputs unless the function name says so (`apply_`*, `update_*`).
 - **No global mutable state.** Pass config through arguments.
 - **Deterministic by default.** Seed all RNGs. Use fixed model params. Same spec should produce the same engine.
 
@@ -106,7 +131,7 @@ Add ≥2 adversarial test cases per non-trivial function.
 ### Python
 
 - Python 3.11+. Type hints on every public function.
-- No `from x import *`.
+- No `from x import `*.
 - Functions > 60 lines: split.
 - Imports: stdlib → third-party → local, blank line between groups.
 - `dataclass(frozen=True)` for immutable data containers; `pydantic` for data crossing external boundaries (file, network, API).
@@ -186,3 +211,4 @@ When inventing a new interface: design it once at the start, document it at the 
 9. Commit.
 10. Update `NOTES.md`.
 11. Confirm every requirement against spec and task prompt before declaring done.
+

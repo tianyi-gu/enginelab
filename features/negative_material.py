@@ -1,4 +1,4 @@
-"""Antichess material evaluation feature."""
+"""Negative material evaluation feature (antichess: fewer pieces = better)."""
 
 from core.board import Board
 from core.types import piece_color
@@ -9,7 +9,7 @@ _PIECE_VALUES = {
 }
 
 
-def antichess_material(board: Board, color: str) -> float:
+def negative_material(board: Board, color: str) -> float:
     """Opponent material minus own material. Kings excluded.
 
     Positive = you have fewer pieces = closer to winning in antichess.

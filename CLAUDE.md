@@ -34,7 +34,7 @@ python main.py full-pipeline --variant atomic --depth 2 --max-moves 80
 - **Board.copy():** Must deep-copy. Modifying copy must not affect original.
 - **Board fields:** `castling_rights` (dict), `en_passant_square` (Square | None)
 - **Agent names:** `Agent_{feat1}__{feat2}` -- double underscore separator, features sorted alphabetically.
-- **12 features:** material, piece_position, center_control, king_safety, enemy_king_danger, mobility, pawn_structure, bishop_pair, rook_activity, capture_threats, antichess_material, explosion_proximity
+- **12 features:** material, piece_position, center_control, king_safety, enemy_king_danger, mobility, pawn_structure, bishop_pair, rook_activity, capture_threats, negative_material, explosion_proximity
 
 ## Architecture
 

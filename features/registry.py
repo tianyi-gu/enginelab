@@ -18,7 +18,7 @@ from features.pawn_structure import pawn_structure
 from features.bishop_pair import bishop_pair
 from features.rook_activity import rook_activity
 from features.capture_threats import capture_threats
-from features.antichess_material import antichess_material
+from features.negative_material import negative_material
 from features.explosion_proximity import explosion_proximity
 
 
@@ -33,7 +33,7 @@ FEATURES: dict[str, Callable[[Board, str], float]] = {
     "bishop_pair": bishop_pair,
     "rook_activity": rook_activity,
     "capture_threats": capture_threats,
-    "antichess_material": antichess_material,
+    "negative_material": negative_material,
     "explosion_proximity": explosion_proximity,
 }
 
@@ -48,7 +48,7 @@ FEATURE_DESCRIPTIONS: dict[str, str] = {
     "bishop_pair": "+0.5 if 2+ bishops",
     "rook_activity": "Open file (+0.5), semi-open (+0.25), 7th rank (+0.5)",
     "capture_threats": "Sum of capturable piece values",
-    "antichess_material": "Inverted material: opponent material minus own material (antichess: fewer pieces = better)",
+    "negative_material": "Inverted material: opponent material minus own material (antichess: fewer pieces = better)",
     "explosion_proximity": "Own non-pawns adjacent to enemy king minus enemy non-pawns adjacent to own king (atomic: explosion threat)",
 }
 

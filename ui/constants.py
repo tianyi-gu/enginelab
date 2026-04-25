@@ -24,7 +24,7 @@ FEATURE_DISPLAY_NAMES: dict[str, str] = {
     "bishop_pair": "Bishop Pair",
     "rook_activity": "Rook Activity",
     "capture_threats": "Capture Threats",
-    "antichess_material": "Negative Material ★",
+    "negative_material": "Negative Material ★",
     "explosion_proximity": "Explosion Proximity ★",
 }
 
@@ -40,7 +40,7 @@ VARIANT_TOP_8_FEATURES: dict[str, list[str]] = {
         "explosion_proximity", "piece_position", "bishop_pair", "material",
     ],
     "antichess": [
-        "antichess_material", "center_control", "mobility", "enemy_king_danger",
+        "negative_material", "center_control", "mobility", "enemy_king_danger",
         "pawn_structure", "material", "piece_position", "king_safety",
     ],
 }

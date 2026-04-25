@@ -37,7 +37,7 @@ VARIANT_FEATURES: dict[str, tuple[list[str], int]] = {
         80,
     ),
     "antichess": (
-        ["antichess_material", "center_control", "mobility", "enemy_king_danger",
+        ["negative_material", "center_control", "mobility", "enemy_king_danger",
          "pawn_structure", "material", "piece_position", "king_safety"],
         60,
     ),

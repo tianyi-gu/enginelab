@@ -35,18 +35,16 @@ discovers which strategic concepts actually win.
 The approach draws directly on principles from quantitative factor analysis.
 The mapping is exact:
 
-| Quant Finance          | EngineLab                        |
-|------------------------|----------------------------------|
-| Factor                 | Evaluation feature               |
-| Factor portfolio       | Feature-subset agent             |
-| Return                 | Tournament win rate              |
-| Alpha                  | Marginal feature contribution    |
-| Factor interaction     | Pairwise feature synergy         |
-| Factor model selection | Best-performing feature subset   |
+EngineLab
 
-By exhaustively testing every feature combination, EngineLab discovers not just
-*which* features matter, but *which combinations are synergistic or redundant* --
-without any gradient-based optimization or neural network black box. The
+Evaluation feature
+Feature-subset agent
+Tournament win rate
+Marginal feature contribution
+Pairwise feature synergy
+Best-performing feature subset
+
+By exhaustively testing every feature combination, EngineLab discovers which combinations are synergistic or redundant without any gradient-based optimization or neural network black box. The
 discovery is transparent, reproducible, and fully interpretable.
 
 ### What It Produces
@@ -55,9 +53,9 @@ discovery is transparent, reproducible, and fully interpretable.
 - Thousands of tournament games (full round-robin, both colors)
 - Ranked leaderboard with win rates
 - Feature marginal contribution analysis
-- Pairwise feature synergy matrix
+- Pairwise feature synergy matrix (for interpretability)
 - Natural-language interpretation
-- Human-readable strategy report (Markdown + optional charts)
+- Human-readable strategy report (Markdown + charts)
 
 ---
 
@@ -88,9 +86,9 @@ Analyze: leaderboard, marginal feature value, pairwise synergy
 Generate human-readable strategy report
 ```
 
-**There is no meta-optimizer.** The discovery comes from exhaustive
-feature-subset testing. This is intentional: equal weights isolate the
-contribution of feature *presence* rather than confounding it with weight
+The discovery comes from exhaustive feature-subset testing.
+This is intentional: equal weights isolate the contribution of feature 
+*presence* rather than confounding it with weight
 tuning. The system answers "which strategic concepts matter?" not "what are the
 optimal weights?"
 
@@ -218,8 +216,6 @@ different rule sets.
 | 1     | Standard Chess  | Normal captures, win by king capture| material, mobility             |
 | 2     | Atomic Chess    | Explosion on capture                | king_danger, capture_threats   |
 | 3*    | Antichess       | Must capture, lose pieces to win    | material (NEGATIVE), mobility  |
-
-*Phase 3 is optional but produces the most dramatic analysis contrast.
 
 **Build Phase 1 first.** Get the entire pipeline working end-to-end with
 standard chess before adding any variants. This gives a validated baseline
@@ -414,7 +410,7 @@ implement.
   move loses.
 - Move cap -- draw.
 
-### 4.6 Antichess Variant (Phase 3 -- Optional)
+### 4.6 Antichess Variant (Phase 3)
 
 Antichess (also called Losing Chess or Giveaway) inverts the objective:
 the goal is to **lose all your pieces**. This is analytically valuable
@@ -507,7 +503,7 @@ Python 3.11+ (required for `tuple[str, ...]` syntax, `X | Y` union types)
 | `rich`       | Pretty terminal output, tables             | Yes      |
 | `pydantic`   | Structured result models, validation       | Yes      |
 | `matplotlib` | Charts for reports                         | Yes      |
-| `streamlit`  | Optional demo dashboard UI                 | Optional |
+| `streamlit`  | Demo dashboard UI                          | Yes      |
 
 ### Package Management
 
@@ -523,7 +519,7 @@ All data is stored as local files:
 - **JSON** for raw game results and configuration
 - **CSV** for leaderboards and analysis tables
 - **Markdown** for final reports
-- **PNG** for optional charts
+- **PNG** for charts
 
 ---
 
@@ -550,7 +546,7 @@ engine-lab/
 |   |-- base.py                      # Variant dispatch + shared helpers
 |   |-- standard.py                  # Standard Chess (Foundation)
 |   |-- atomic.py                    # Atomic Chess (Area 1)
-|   `-- antichess.py                 # Antichess (Area 1, optional)
+|   `-- antichess.py                 # Antichess (Area 1)
 |
 |-- features/                        # Area 1
 |   |-- __init__.py
@@ -597,7 +593,7 @@ engine-lab/
 |   |-- __init__.py
 |   `-- markdown_report.py           # Markdown report generator
 |
-|-- ui/                              # Area 2 (optional)
+|-- ui/                              # Area 2
 |   `-- app.py                       # Streamlit dashboard
 |
 |-- outputs/                         # Generated artifacts (gitignored)
@@ -616,7 +612,7 @@ engine-lab/
     |-- test_move_generation.py      # Foundation
     |-- test_standard.py             # Foundation
     |-- test_atomic.py               # Area 1
-    |-- test_antichess.py            # Area 1 (optional)
+    |-- test_antichess.py            # Area 1
     |-- test_features.py             # Area 1
     |-- test_agents.py               # Area 1
     |-- test_alpha_beta.py           # Area 1
@@ -778,7 +774,7 @@ def generate_atomic_moves(board: Board) -> list[Move]:
     ...
 ```
 
-### 7.8 Antichess Variant (Optional)
+### 7.8 Antichess Variant
 
 ```python
 # variants/antichess.py
@@ -1295,7 +1291,7 @@ def generate_feature_subset_agents(
 - Variant-aware: use `get_apply_move(variant)` and
   `get_generate_legal_moves(variant)`.
 
-##### Phase 5: Antichess (Optional)
+##### Phase 5: Antichess
 
 - `apply_antichess_move`: Same as standard. Winner = player with no pieces.
 - `generate_antichess_moves`: If captures exist, return only captures.
@@ -1329,7 +1325,7 @@ def generate_feature_subset_agents(
 | 1J  | `evaluate` returns a numeric float for non-terminal boards       |
 | 1K  | Alpha-beta returns a legal move at depth 1 and depth 2           |
 
-**Antichess (optional):**
+**Antichess:**
 
 | ID  | Criterion                                                        |
 |-----|------------------------------------------------------------------|
@@ -1368,7 +1364,7 @@ analysis/__init__.py
 reports/markdown_report.py
 reports/__init__.py
 main.py
-ui/app.py                     # optional Streamlit UI
+ui/app.py                
 tests/test_tournament.py
 tests/test_analysis.py
 ```
@@ -1426,7 +1422,6 @@ class RandomAgent:
 - N agents -> `N * (N - 1)` games.
 - Progress bar with `tqdm`.
 - Per-game seed: `tournament_seed + game_index`.
-- **Optional multiprocessing:** Games are embarrassingly parallel:
   ```python
   from multiprocessing import Pool
   with Pool(workers) as pool:
@@ -1486,7 +1481,7 @@ python main.py analyze --input outputs/data/tournament_results_atomic.json
 python main.py full-pipeline --variant atomic --depth 2 --max-moves 80
 ```
 
-##### Optional Streamlit UI (`ui/app.py`)
+##### Streamlit UI (`ui/app.py`)
 
 Variant selector, feature checkboxes, depth/max-moves sliders, run button,
 leaderboard table, feature contribution bar chart, synergy heatmap.
@@ -1782,7 +1777,7 @@ Report saved: outputs/reports/atomic_strategy_report.md
 | 6-7    | Run per-area tests, fix failures      | Run per-area tests, fix failures     |
 | 7-8    | Merge Area 1 to main                  | Rebase, swap mock, merge Area 2      |
 | 8-9    | Integration debugging, full pipeline  | Integration debugging, full pipeline |
-| 9-10   | Optional: Antichess variant           | Optional: Streamlit UI               |
+| 9-10   | Antichess variant                     | Streamlit UI                         |
 | 10-11  | Prepare presentation, rehearse demo   | Prepare presentation, rehearse demo  |
 | 11-12  | Final testing, buffer for fixes       | Final testing, buffer for fixes      |
 

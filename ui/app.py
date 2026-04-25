@@ -28,6 +28,7 @@ from ui.play_engine import (
     apply_move_for_ui,
     get_legal_moves_uci,
     game_status_variant,
+    _parse_uci,
 )
 
 # Real backend imports
@@ -451,7 +452,13 @@ def _render_board_area() -> None:
         )
         return
 
-    _show_svg(render_board(starting_fen(), size=_BOARD_PX))
+    from ui.chess_viewer import chess_play_dnd
+    chess_play_dnd(
+        fen=chess.STARTING_FEN,
+        legal_moves=[],
+        status="ended",
+        height=520,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -563,7 +570,23 @@ def _render_live_panel(board_ph=None) -> None:
     PROGRESS_INTERVAL = 0.22
     TICK = 0.02
 
-    chess_board = chess.Board() if animation_games else None
+    # Variant-aware move application for the animation
+    from core.board import Board as _ProjBoard
+    from variants.base import get_apply_move as _get_apply_move
+    _apply_fn = _get_apply_move(variant) if animation_games else None
+
+    def _animate_step(cur_fen: str, uci: str) -> tuple[str, list[str] | None]:
+        """Apply uci with variant rules. Returns (new_fen, exploded_squares|None)."""
+        proj_board = _ProjBoard.from_fen(cur_fen)
+        move = _parse_uci(uci, proj_board.side_to_move)
+        new_board = _apply_fn(proj_board, move)
+        new_fen_local = new_board.to_fen()
+        exploded_local = None
+        if variant == "atomic":
+            exploded_local = _detect_explosions(cur_fen, new_fen_local, uci)
+        return new_fen_local, exploded_local
+
+    current_fen = chess.STARTING_FEN if animation_games else None
     game_idx = 0
     move_idx = 0
 
@@ -592,28 +615,32 @@ def _render_live_panel(board_ph=None) -> None:
             next_progress_at = elapsed + PROGRESS_INTERVAL
 
         # Board update (fast cadence) — cycle through several games
-        if chess_board is not None and board_ph is not None and elapsed >= next_move_at:
-            cur_game = animation_games[game_idx] if animation_games else []
+        if (current_fen is not None and board_ph is not None
+                and animation_games and elapsed >= next_move_at):
+            cur_game = animation_games[game_idx]
             if move_idx >= len(cur_game):
                 # Finished current game; advance to next and reset board
-                game_idx = (game_idx + 1) % max(1, len(animation_games))
-                chess_board = chess.Board()
+                game_idx = (game_idx + 1) % len(animation_games)
+                current_fen = chess.STARTING_FEN
                 move_idx = 0
-                cur_game = animation_games[game_idx] if animation_games else []
+                cur_game = animation_games[game_idx]
 
             if move_idx < len(cur_game):
                 uci = cur_game[move_idx]
                 try:
-                    chess_board.push_uci(uci)
+                    new_fen, exploded = _animate_step(current_fen, uci)
                     svg = render_board(
-                        chess_board.fen(), last_move_uci=uci, size=_BOARD_PX,
+                        new_fen,
+                        last_move_uci=uci,
+                        exploded_squares=exploded,
+                        size=_BOARD_PX,
                     )
                     board_ph.markdown(_svg_html(svg), unsafe_allow_html=True)
-                except Exception:
-                    # Illegal under standard rules — skip rest of this game
-                    move_idx = len(cur_game)
-                else:
+                    current_fen = new_fen
                     move_idx += 1
+                except Exception:
+                    # Move not applicable under variant rules — end this game
+                    move_idx = len(cur_game)
             next_move_at = elapsed + MOVE_INTERVAL
 
         time.sleep(TICK)
@@ -1161,25 +1188,30 @@ def _detect_explosions(old_fen: str, new_fen: str, move_uci: str) -> list[str] |
     """Compare board states to find squares where pieces were destroyed (atomic).
 
     Returns list of algebraic square names that had pieces removed by explosion,
-    or None if no explosion occurred. Works correctly for en passant captures.
+    or None if no explosion occurred.
+
+    Atomic capture signature: the destination square is EMPTY after the move
+    (in standard chess, the capturing piece would be on the destination).
     """
+    if len(move_uci) < 4:
+        return None
     old_board = chess.Board(old_fen)
     new_board = chess.Board(new_fen)
 
-    # Count pieces removed — compare all squares between old and new position.
-    # This catches normal captures, en passant, and atomic explosions.
-    disappeared = []
-    for sq in chess.SQUARES:
-        old_piece = old_board.piece_at(sq)
-        new_piece = new_board.piece_at(sq)
-        if old_piece is not None and new_piece is None:
-            disappeared.append(chess.square_name(sq))
+    dest_sq = chess.parse_square(move_uci[2:4])
+    # No capture happened (dest was empty before) — not an atomic explosion
+    if old_board.piece_at(dest_sq) is None:
+        return None
+    # In standard chess, dest now holds the capturing piece. In atomic, dest is
+    # empty because both pieces exploded.
+    if new_board.piece_at(dest_sq) is not None:
+        return None
 
-    # In a normal capture, exactly 1 piece disappears (from the source square;
-    # the captured piece's square gets the capturing piece).
-    # In atomic, 3+ pieces disappear (capturing piece + captured piece + adjacent).
-    # Threshold > 2 to distinguish atomic explosion from normal capture.
-    return disappeared if len(disappeared) > 2 else None
+    return [
+        chess.square_name(sq)
+        for sq in chess.SQUARES
+        if old_board.piece_at(sq) is not None and new_board.piece_at(sq) is None
+    ]
 
 
 # ---------------------------------------------------------------------------

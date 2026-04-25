@@ -537,7 +537,7 @@ def _start_tournament() -> None:
     config = {
         "variant": variant,
         "selected_features": list(VARIANT_TOP_8_FEATURES.get(variant, ALL_FEATURES[:8])),
-        "depth": 1,
+        "depth": 2,
         "max_moves": 80,
         "seed": 42,
     }
@@ -705,7 +705,7 @@ def _render_build_panel() -> None:
     if os.path.exists(precomputed_path):
         n_games = _load_precomputed_count(precomputed_path)
         if n_games > 0:
-            st.caption(f"{n_games:,} games pre-computed · replays in ~3s")
+            st.caption(f"{n_games:,} games pre-computed (depth 2) · loads in ~3s")
         else:
             st.caption("Pre-computed results ready")
     else:
@@ -745,21 +745,13 @@ def _render_live_panel() -> None:
             st.rerun()
             return
 
-    st.markdown("### Building...")
+    st.markdown(f"### Replaying {variant.title()} Tournament...")
     st.progress(min(progress, 1.0))
 
     if total > 0:
-        rate = done / elapsed if elapsed > 0 else 0
-        remaining = (total - done) / rate if rate > 0 else 0
-        st.caption(
-            f"Games **{done}** / **{total}**  --  "
-            f"Elapsed: **{elapsed:.0f}s**  --  "
-            f"Est. remaining: **{remaining:.0f}s**"
-        )
+        st.caption(f"Games **{done}** / **{total}**  --  **{progress*100:.0f}%** complete")
     else:
-        st.caption(f"Generating agents... Elapsed: **{elapsed:.0f}s**")
-
-    st.caption(f"Variant: **{variant.title()}** -- Depth: **{config.get('depth', 2)}**")
+        st.caption("Loading pre-computed tournament data...")
 
     if st.button("Cancel", use_container_width=True):
         st.session_state["running"] = False

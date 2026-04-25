@@ -36,8 +36,8 @@ VARIANT_TOP_8_FEATURES: dict[str, list[str]] = {
         "capture_threats", "center_control", "piece_position", "pawn_structure",
     ],
     "atomic": [
-        "mobility", "enemy_king_danger", "explosion_proximity",
-        "center_control", "capture_threats", "material", "piece_position", "bishop_pair",
+        "mobility", "capture_threats", "center_control", "enemy_king_danger",
+        "explosion_proximity", "piece_position", "bishop_pair", "material",
     ],
     "antichess": [
         "antichess_material", "center_control", "mobility", "enemy_king_danger",

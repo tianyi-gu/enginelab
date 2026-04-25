@@ -24,7 +24,7 @@ FEATURE_DISPLAY_NAMES: dict[str, str] = {
     "bishop_pair": "Bishop Pair",
     "rook_activity": "Rook Activity",
     "capture_threats": "Capture Threats",
-    "antichess_material": "Antichess Material ★",
+    "antichess_material": "Negative Material ★",
     "explosion_proximity": "Explosion Proximity ★",
 }
 

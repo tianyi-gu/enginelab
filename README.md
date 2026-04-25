@@ -27,6 +27,9 @@ python main.py full-pipeline --variant atomic --depth 2 --max-moves 80
 - [docs/development_workflow.md](docs/development_workflow.md) -- Parallel development process
 - [docs/agent_definitions.md](docs/agent_definitions.md) -- Per-developer scope and prompts
 - [docs/harness_engineering.md](docs/harness_engineering.md) -- AI agent operation best practices
+- [docs/hypotheses.md](docs/hypotheses.md) -- Underlying assumptions, known limitations, and falsified hypotheses
+- [docs/pitch_outline.md](docs/pitch_outline.md) -- 5-minute pitch structure and Q&A prep
+- [docs/ai_process_retrospective.md](docs/ai_process_retrospective.md) -- AI-assisted development retrospective
 
 ## Project Structure
 

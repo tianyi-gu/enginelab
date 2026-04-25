@@ -296,6 +296,8 @@ outputs/
 pytest>=8.0.0           Testing
 pandas>=2.0.0           Data manipulation
 numpy>=1.26.0           Numerical computation
+fastapi                 REST + streaming API server (`api/server.py`)
+uvicorn                 ASGI server for FastAPI
 tqdm>=4.66.0            CLI progress bars
 typer>=0.12.0           CLI framework
 rich>=13.0.0            Rich terminal output

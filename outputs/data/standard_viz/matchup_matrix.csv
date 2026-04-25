@@ -1,0 +1,11 @@
+,Agent_bishop_pair,Agent_capture_threats,Agent_center_control,Agent_enemy_king_danger,Agent_king_safety,Agent_material,Agent_mobility,Agent_pawn_structure,Agent_piece_position,Agent_rook_activity
+Agent_bishop_pair,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+Agent_capture_threats,0.0,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+Agent_center_control,0.0,0.0,,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+Agent_enemy_king_danger,0.0,0.0,0.0,,0.0,0.0,0.0,0.0,0.0,0.0
+Agent_king_safety,0.0,0.0,0.0,0.0,,0.0,0.0,0.0,0.0,0.0
+Agent_material,0.0,0.0,0.0,0.0,0.0,,0.0,0.0,0.0,0.0
+Agent_mobility,0.0,0.0,0.0,0.0,0.0,0.0,,0.0,0.0,0.0
+Agent_pawn_structure,0.0,0.0,0.0,0.0,0.0,0.0,0.0,,0.0,0.0
+Agent_piece_position,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,,0.0
+Agent_rook_activity,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,

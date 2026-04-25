@@ -1,0 +1,2 @@
+feature_count,num_agents,avg_score_rate,min_score_rate,max_score_rate,std_score_rate
+1,10,0.5,0.5,0.5,0.0

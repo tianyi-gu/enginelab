@@ -1,0 +1,11 @@
+feature,avg_score_with,avg_score_without,marginal,top_k_frequency
+bishop_pair,0.5,0.5,0.0,0.1
+capture_threats,0.5,0.5,0.0,0.1
+center_control,0.5,0.5,0.0,0.1
+enemy_king_danger,0.5,0.5,0.0,0.1
+king_safety,0.5,0.5,0.0,0.1
+material,0.5,0.5,0.0,0.1
+mobility,0.5,0.5,0.0,0.1
+pawn_structure,0.5,0.5,0.0,0.1
+piece_position,0.5,0.5,0.0,0.1
+rook_activity,0.5,0.5,0.0,0.1

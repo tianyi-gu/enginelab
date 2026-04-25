@@ -1,0 +1,96 @@
+{
+  "variant": "standard",
+  "total_agents": 10,
+  "total_games": 90,
+  "decisive_games": 0,
+  "draws": 90,
+  "draw_rate": 1.0,
+  "avg_game_length": 40.0,
+  "min_game_length": 40,
+  "max_game_length": 40,
+  "termination_breakdown": {
+    "move_cap": 90
+  },
+  "best_agent": {
+    "name": "Agent_bishop_pair",
+    "features": [
+      "bishop_pair"
+    ],
+    "score_rate": 0.5,
+    "wins": 0,
+    "losses": 0,
+    "draws": 18
+  },
+  "worst_agent": {
+    "name": "Agent_rook_activity",
+    "features": [
+      "rook_activity"
+    ],
+    "score_rate": 0.5
+  },
+  "feature_rankings": [
+    {
+      "feature": "bishop_pair",
+      "marginal": 0.0
+    },
+    {
+      "feature": "capture_threats",
+      "marginal": 0.0
+    },
+    {
+      "feature": "center_control",
+      "marginal": 0.0
+    },
+    {
+      "feature": "enemy_king_danger",
+      "marginal": 0.0
+    },
+    {
+      "feature": "king_safety",
+      "marginal": 0.0
+    },
+    {
+      "feature": "material",
+      "marginal": 0.0
+    },
+    {
+      "feature": "mobility",
+      "marginal": 0.0
+    },
+    {
+      "feature": "pawn_structure",
+      "marginal": 0.0
+    },
+    {
+      "feature": "piece_position",
+      "marginal": 0.0
+    },
+    {
+      "feature": "rook_activity",
+      "marginal": 0.0
+    }
+  ],
+  "top_synergies": [
+    {
+      "pair": "bishop_pair + capture_threats",
+      "synergy": -0.5
+    },
+    {
+      "pair": "bishop_pair + center_control",
+      "synergy": -0.5
+    },
+    {
+      "pair": "bishop_pair + enemy_king_danger",
+      "synergy": -0.5
+    },
+    {
+      "pair": "bishop_pair + king_safety",
+      "synergy": -0.5
+    },
+    {
+      "pair": "bishop_pair + material",
+      "synergy": -0.5
+    }
+  ],
+  "interpretation": "In standard chess, the best-performing agent was Agent_bishop_pair (features: bishop_pair) with a score rate of 0.500 over 18 games. The most redundant pair was piece_position and rook_activity (synergy=-0.500)."
+}

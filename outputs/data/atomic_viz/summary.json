@@ -1,0 +1,99 @@
+{
+  "variant": "atomic",
+  "total_agents": 30,
+  "total_games": 870,
+  "decisive_games": 492,
+  "draws": 378,
+  "draw_rate": 0.4345,
+  "avg_game_length": 41.15,
+  "min_game_length": 5,
+  "max_game_length": 60,
+  "termination_breakdown": {
+    "move_cap": 378,
+    "king_exploded": 310,
+    "checkmate": 182
+  },
+  "best_agent": {
+    "name": "Agent_bishop_pair__mobility",
+    "features": [
+      "bishop_pair",
+      "mobility"
+    ],
+    "score_rate": 0.8189655172413793,
+    "wins": 41,
+    "losses": 4,
+    "draws": 13
+  },
+  "worst_agent": {
+    "name": "Agent_bishop_pair",
+    "features": [
+      "bishop_pair"
+    ],
+    "score_rate": 0.29310344827586204
+  },
+  "feature_rankings": [
+    {
+      "feature": "mobility",
+      "marginal": 0.2874
+    },
+    {
+      "feature": "enemy_king_danger",
+      "marginal": 0.2064
+    },
+    {
+      "feature": "center_control",
+      "marginal": 0.0844
+    },
+    {
+      "feature": "capture_threats",
+      "marginal": 0.0065
+    },
+    {
+      "feature": "material",
+      "marginal": 0.0
+    },
+    {
+      "feature": "bishop_pair",
+      "marginal": -0.0336
+    },
+    {
+      "feature": "piece_position",
+      "marginal": -0.0511
+    },
+    {
+      "feature": "rook_activity",
+      "marginal": -0.0766
+    },
+    {
+      "feature": "king_safety",
+      "marginal": -0.1044
+    },
+    {
+      "feature": "pawn_structure",
+      "marginal": -0.1437
+    }
+  ],
+  "top_synergies": [
+    {
+      "pair": "center_control + material",
+      "synergy": 0.1135
+    },
+    {
+      "pair": "center_control + king_safety",
+      "synergy": 0.1006
+    },
+    {
+      "pair": "bishop_pair + mobility",
+      "synergy": 0.0828
+    },
+    {
+      "pair": "capture_threats + pawn_structure",
+      "synergy": 0.056
+    },
+    {
+      "pair": "capture_threats + material",
+      "synergy": 0.056
+    }
+  ],
+  "interpretation": "In atomic chess, the best-performing agent was Agent_bishop_pair__mobility (features: bishop_pair, mobility) with a score rate of 0.819 over 58 games. The most valuable features were mobility (+0.287), enemy_king_danger (+0.206), center_control (+0.084). The least valuable feature was pawn_structure (-0.144). The strongest synergy was between center_control and material (synergy=0.114), meaning these features are more valuable together than their individual contributions suggest. The most redundant pair was enemy_king_danger and mobility (synergy=-0.938)."
+}

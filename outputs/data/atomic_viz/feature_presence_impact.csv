@@ -1,0 +1,11 @@
+feature,agents_with,avg_rate_with,agents_without,avg_rate_without,lift
+bishop_pair,10,0.4776,20,0.5112,-0.0336
+capture_threats,10,0.5043,20,0.4978,0.0065
+center_control,6,0.5675,24,0.4831,0.0844
+enemy_king_danger,4,0.6789,26,0.4725,0.2064
+king_safety,4,0.4095,26,0.5139,-0.1044
+material,4,0.5,26,0.5,0.0
+mobility,3,0.7586,27,0.4713,0.2874
+pawn_structure,3,0.3707,27,0.5144,-0.1437
+piece_position,3,0.454,27,0.5051,-0.0511
+rook_activity,3,0.431,27,0.5077,-0.0766

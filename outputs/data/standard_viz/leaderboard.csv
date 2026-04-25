@@ -1,0 +1,11 @@
+rank,agent_name,features,feature_count,games_played,wins,losses,draws,score_rate,win_rate,draw_rate,loss_rate,avg_game_length
+1,Agent_bishop_pair,bishop_pair,1,18,0,0,18,0.5,0.0,1.0,0.0,40.0
+2,Agent_capture_threats,capture_threats,1,18,0,0,18,0.5,0.0,1.0,0.0,40.0
+3,Agent_center_control,center_control,1,18,0,0,18,0.5,0.0,1.0,0.0,40.0
+4,Agent_enemy_king_danger,enemy_king_danger,1,18,0,0,18,0.5,0.0,1.0,0.0,40.0
+5,Agent_king_safety,king_safety,1,18,0,0,18,0.5,0.0,1.0,0.0,40.0
+6,Agent_material,material,1,18,0,0,18,0.5,0.0,1.0,0.0,40.0
+7,Agent_mobility,mobility,1,18,0,0,18,0.5,0.0,1.0,0.0,40.0
+8,Agent_pawn_structure,pawn_structure,1,18,0,0,18,0.5,0.0,1.0,0.0,40.0
+9,Agent_piece_position,piece_position,1,18,0,0,18,0.5,0.0,1.0,0.0,40.0
+10,Agent_rook_activity,rook_activity,1,18,0,0,18,0.5,0.0,1.0,0.0,40.0

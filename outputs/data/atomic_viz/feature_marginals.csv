@@ -1,0 +1,11 @@
+feature,avg_score_with,avg_score_without,marginal,top_k_frequency
+mobility,0.7586,0.4713,0.2874,0.3
+enemy_king_danger,0.6789,0.4725,0.2064,0.4
+center_control,0.5675,0.4831,0.0844,0.3
+capture_threats,0.5043,0.4978,0.0065,0.3
+material,0.5,0.5,0.0,0.2
+bishop_pair,0.4776,0.5112,-0.0336,0.2
+piece_position,0.454,0.5051,-0.0511,0.0
+rook_activity,0.431,0.5077,-0.0766,0.0
+king_safety,0.4095,0.5139,-0.1044,0.1
+pawn_structure,0.3707,0.5144,-0.1437,0.0

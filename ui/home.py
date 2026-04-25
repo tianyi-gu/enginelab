@@ -213,7 +213,7 @@ body {
 <!-- Main content -->
 <div class="content">
   <div class="title fade-in">ENGINELAB</div>
-  <div class="subtitle fade-in fade-in-d1">feature-subset engine discovery</div>
+  <div class="subtitle fade-in fade-in-d1">discovering how to win any chess variant</div>
   <div class="tagline fade-in fade-in-d1">
     Build chess engines by selecting evaluation features, run round-robin
     tournaments across variants, and discover which strategic concepts

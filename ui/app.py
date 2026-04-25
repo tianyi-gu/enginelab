@@ -92,8 +92,15 @@ _CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 *, *::before, *::after {
-    font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
     box-sizing: border-box;
+}
+/* Apply Inter only to text-bearing elements, NOT to icon spans (Material
+   Symbols etc) which need their own font to render glyphs. Otherwise the
+   expander arrow shows as the literal text "_arrow_right". */
+body, .stApp, h1, h2, h3, h4, h5, h6, p, label, button, input,
+.stMarkdown, .stCaption, .stText, .stRadio, .stCheckbox,
+div[data-testid="stMarkdownContainer"] {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 body, .stApp { background: #161512 !important; color: #bababa !important; }
 .block-container {
@@ -1137,7 +1144,11 @@ def _render_play_panel() -> None:
 
 
 def _handle_player_move(uci: str, variant: str, depth: int) -> None:
-    """Apply player's move, then immediately get engine reply."""
+    """Apply player's move and rerun immediately so the player sees their
+    move on the board with no latency. The engine response is triggered
+    on the next render (when side-to-move flips to black) so it can
+    'think' visibly without holding up the player's frame.
+    """
     fen = st.session_state["play_fen"]
 
     # Apply player move with real variant logic
@@ -1156,11 +1167,8 @@ def _handle_player_move(uci: str, variant: str, depth: int) -> None:
     if result["status"] != "ongoing":
         st.session_state["play_status"] = result["status"]
         st.session_state["play_winner"] = result["winner"]
-        st.rerun()
-        return
 
-    # Engine reply
-    _handle_engine_move(variant, depth)
+    st.rerun()
 
 
 def _handle_engine_move(variant: str, depth: int) -> None:

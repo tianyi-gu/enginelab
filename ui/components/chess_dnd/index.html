@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="https://code.jquery.com/jquery-3.7.1.min.js" crossorigin="anonymous"></script>
+<link rel="stylesheet"
+      href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css"
+      crossorigin="anonymous">
+<script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"
+        crossorigin="anonymous"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #161512;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 0 0;
+}
+#board { width: 460px; }
+.board-b72b1 { border: 2px solid #2c2b29 !important; border-radius: 2px; }
+.highlight-legal {
+  background: radial-gradient(circle, rgba(98,153,36,0.45) 24%, transparent 25%) !important;
+}
+.highlight-capture {
+  background: radial-gradient(circle, transparent 50%, rgba(98,153,36,0.45) 51%) !important;
+}
+.highlight-lastmove {
+  background-color: rgba(155, 199, 0, 0.35) !important;
+}
+.highlight-explosion {
+  background-color: rgba(255, 107, 53, 0.45) !important;
+}
+#promo-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 999;
+  justify-content: center;
+  align-items: center;
+}
+#promo-modal.show { display: flex; }
+.promo-opts {
+  background: #272522;
+  border: 1px solid #3a3a38;
+  border-radius: 8px;
+  padding: 16px 20px;
+  display: flex;
+  gap: 10px;
+}
+.promo-btn {
+  width: 56px;
+  height: 56px;
+  background: #1f1e1c;
+  border: 1px solid #3a3a38;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #d0cfc8;
+}
+.promo-btn:hover { background: #3a3a38; }
+</style>
+</head>
+<body>
+<div id="promo-modal">
+  <div class="promo-opts">
+    <button class="promo-btn" data-promo="q">&#9819;</button>
+    <button class="promo-btn" data-promo="r">&#9820;</button>
+    <button class="promo-btn" data-promo="b">&#9821;</button>
+    <button class="promo-btn" data-promo="n">&#9822;</button>
+  </div>
+</div>
+
+<div id="board"></div>
+
+<script>
+const Streamlit = {
+  setComponentReady() {
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:componentReady",
+      apiVersion: 1,
+    }, "*");
+  },
+  setFrameHeight(height) {
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:setFrameHeight",
+      height,
+    }, "*");
+  },
+  setComponentValue(value) {
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:setComponentValue",
+      value,
+      dataType: "json",
+    }, "*");
+  },
+};
+
+let board = null;
+let legalTargets = {};
+let legalMoves = [];
+let gameStatus = "ongoing";
+let lastMoveSquares = [];
+let explodedSquares = [];
+let pendingPromotion = null;
+let dragging = false;
+let lastSentMove = null;
+
+function buildLegalTargets() {
+  legalTargets = {};
+  legalMoves.forEach(function(uci) {
+    const from = uci.substring(0, 2);
+    const to = uci.substring(2, 4);
+    if (!legalTargets[from]) legalTargets[from] = [];
+    if (legalTargets[from].indexOf(to) === -1) legalTargets[from].push(to);
+  });
+}
+
+function onDragStart(source, piece) {
+  if (gameStatus !== "ongoing") return false;
+  if (piece.search(/^b/) !== -1) return false;
+  if (!legalTargets[source] || legalTargets[source].length === 0) return false;
+  dragging = true;
+  onMouseout();
+
+  const pos = board.position();
+  (legalTargets[source] || []).forEach(function(target) {
+    const el = document.querySelector(".square-" + target);
+    if (el) el.classList.add(pos[target] ? "highlight-capture" : "highlight-legal");
+  });
+}
+
+function onDrop(source, target) {
+  onMouseout();
+  dragging = false;
+  if (!legalTargets[source] || legalTargets[source].indexOf(target) === -1) {
+    return "snapback";
+  }
+
+  const piece = board.position()[source];
+  if (piece === "wP" && target[1] === "8") {
+    pendingPromotion = { from: source, to: target };
+    document.getElementById("promo-modal").classList.add("show");
+    return "snapback";
+  }
+
+  sendMove(source + target);
+}
+
+function doPromotion(promotionPiece) {
+  document.getElementById("promo-modal").classList.remove("show");
+  if (!pendingPromotion) return;
+  sendMove(pendingPromotion.from + pendingPromotion.to + promotionPiece);
+  pendingPromotion = null;
+}
+
+function sendMove(uci) {
+  if (lastSentMove === uci) return;
+  lastSentMove = uci;
+  Streamlit.setComponentValue(uci);
+}
+
+function onMouseover(square) {
+  if (gameStatus !== "ongoing") return;
+  const targets = legalTargets[square];
+  if (!targets) return;
+
+  const sourceEl = document.querySelector(".square-" + square);
+  if (sourceEl) sourceEl.classList.add("highlight-legal");
+
+  const pos = board.position();
+  targets.forEach(function(target) {
+    const el = document.querySelector(".square-" + target);
+    if (!el) return;
+    el.classList.add(pos[target] ? "highlight-capture" : "highlight-legal");
+  });
+}
+
+function onMouseout() {
+  document.querySelectorAll(".highlight-legal,.highlight-capture").forEach(function(el) {
+    el.classList.remove("highlight-legal", "highlight-capture");
+  });
+}
+
+function applyHighlights() {
+  lastMoveSquares.forEach(function(square) {
+    const el = document.querySelector(".square-" + square);
+    if (el) el.classList.add("highlight-lastmove");
+  });
+  explodedSquares.forEach(function(square) {
+    const el = document.querySelector(".square-" + square);
+    if (el) el.classList.add("highlight-explosion");
+  });
+}
+
+function renderBoard(args) {
+  legalMoves = args.legal_moves || [];
+  gameStatus = args.status || "ongoing";
+  lastMoveSquares = args.last_move_squares || [];
+  explodedSquares = args.exploded_squares || [];
+  pendingPromotion = null;
+  dragging = false;
+  lastSentMove = null;
+  buildLegalTargets();
+
+  const boardEl = document.getElementById("board");
+  boardEl.style.width = (args.board_size || 460) + "px";
+  boardEl.innerHTML = "";
+
+  board = Chessboard("board", {
+    position: args.fen,
+    pieceTheme: args.piece_theme,
+    draggable: true,
+    dropOffBoard: "snapback",
+    onDragStart,
+    onDrop,
+    onSnapEnd: function() { dragging = false; },
+    onMouseoverSquare: function(square) { if (!dragging) onMouseover(square); },
+    onMouseoutSquare: function() { if (!dragging) onMouseout(); },
+  });
+
+  applyHighlights();
+  Streamlit.setFrameHeight(args.height || 520);
+}
+
+window.addEventListener("message", function(event) {
+  if (!event.data || event.data.type !== "streamlit:render") return;
+  renderBoard(event.data.args || {});
+});
+
+document.querySelectorAll(".promo-btn").forEach(function(button) {
+  button.addEventListener("click", function() {
+    doPromotion(button.dataset.promo);
+  });
+});
+
+window.addEventListener("resize", function() {
+  if (board) board.resize();
+});
+
+Streamlit.setComponentReady();
+</script>
+</body>
+</html>

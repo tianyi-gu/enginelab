@@ -66,6 +66,94 @@ class Board:
         """True if winner is set (includes 'draw')."""
         return self.winner is not None
 
+    def to_fen(self) -> str:
+        """Convert board state to a FEN string."""
+        rows = []
+        for rank in range(7, -1, -1):
+            empty = 0
+            row_str = ""
+            for col in range(8):
+                piece = self.grid[rank][col]
+                if piece is None:
+                    empty += 1
+                else:
+                    if empty > 0:
+                        row_str += str(empty)
+                        empty = 0
+                    row_str += piece
+            if empty > 0:
+                row_str += str(empty)
+            rows.append(row_str)
+
+        castling = ""
+        for c in ["K", "Q", "k", "q"]:
+            if self.castling_rights.get(c, False):
+                castling += c
+        if not castling:
+            castling = "-"
+
+        ep = "-"
+        if self.en_passant_square is not None:
+            ep = square_to_algebraic(
+                self.en_passant_square[0], self.en_passant_square[1],
+            )
+
+        halfmove = 0
+        fullmove = self.move_count // 2 + 1
+        return (
+            f"{'/'.join(rows)} {self.side_to_move} "
+            f"{castling} {ep} {halfmove} {fullmove}"
+        )
+
+    @staticmethod
+    def from_fen(fen: str) -> "Board":
+        """Create a Board from a FEN string."""
+        from core.coordinates import algebraic_to_square
+
+        parts = fen.split()
+        board = Board()
+
+        # Piece placement
+        rows = parts[0].split("/")
+        for rank_idx, row_str in enumerate(rows):
+            rank = 7 - rank_idx
+            col = 0
+            for ch in row_str:
+                if ch.isdigit():
+                    col += int(ch)
+                else:
+                    board.grid[rank][col] = ch
+                    col += 1
+
+        # Side to move
+        board.side_to_move = parts[1] if len(parts) > 1 else "w"
+
+        # Castling rights
+        castling_str = parts[2] if len(parts) > 2 else "-"
+        board.castling_rights = {
+            "K": "K" in castling_str,
+            "Q": "Q" in castling_str,
+            "k": "k" in castling_str,
+            "q": "q" in castling_str,
+        }
+
+        # En passant
+        ep_str = parts[3] if len(parts) > 3 else "-"
+        if ep_str != "-":
+            board.en_passant_square = algebraic_to_square(ep_str)
+        else:
+            board.en_passant_square = None
+
+        # Move count (use fullmove number)
+        if len(parts) > 5:
+            fullmove = int(parts[5])
+            halfmove_offset = 0 if board.side_to_move == "w" else 1
+            board.move_count = (fullmove - 1) * 2 + halfmove_offset
+        else:
+            board.move_count = 0
+
+        return board
+
     def print_board(self) -> None:
         """Pretty-print with rank 8 at top, file labels at bottom."""
         piece_display = {None: "."}

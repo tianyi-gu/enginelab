@@ -16,10 +16,15 @@ def run_round_robin(
     depth: int,
     max_moves: int,
     seed: int,
+    on_game_complete=None,
 ) -> list[GameResult]:
     """Play every ordered pair once: N*(N-1) games.
 
     Per-game seed = tournament_seed + game_index for reproducibility.
+
+    Args:
+        on_game_complete: Optional callback(games_done, total, result)
+            called after each game completes. For UI progress updates.
     """
     games: list[tuple[FeatureSubsetAgent, FeatureSubsetAgent, int]] = []
     game_index = 0
@@ -30,6 +35,7 @@ def run_round_robin(
             games.append((white, black, seed + game_index))
             game_index += 1
 
+    total = len(games)
     results: list[GameResult] = []
     for white, black, game_seed in tqdm(games, desc="Tournament"):
         result = play_game(
@@ -40,5 +46,7 @@ def run_round_robin(
             seed=game_seed,
         )
         results.append(result)
+        if on_game_complete is not None:
+            on_game_complete(len(results), total, result)
 
     return results

@@ -10,7 +10,7 @@ def save_results_json(results: list[GameResult], path: str) -> None:
     """Save results to JSON file."""
     data = []
     for r in results:
-        data.append({
+        entry = {
             "white_agent": r.white_agent,
             "black_agent": r.black_agent,
             "winner": r.winner,
@@ -20,7 +20,10 @@ def save_results_json(results: list[GameResult], path: str) -> None:
             "black_avg_nodes": r.black_avg_nodes,
             "white_avg_time": r.white_avg_time,
             "black_avg_time": r.black_avg_time,
-        })
+        }
+        if r.move_list:
+            entry["move_list"] = r.move_list
+        data.append(entry)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
@@ -41,6 +44,7 @@ def load_results_json(path: str) -> list[GameResult]:
             black_avg_nodes=d["black_avg_nodes"],
             white_avg_time=d["white_avg_time"],
             black_avg_time=d["black_avg_time"],
+            move_list=d.get("move_list", []),
         )
         for d in data
     ]

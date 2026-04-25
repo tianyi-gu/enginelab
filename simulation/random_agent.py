@@ -1,7 +1,10 @@
-"""Random agent — stub for Area 1 implementation."""
+"""Random agent for EngineLab baseline comparisons."""
+
+import random
 
 from core.board import Board
 from core.move import Move
+from variants.base import get_generate_legal_moves
 
 
 class RandomAgent:
@@ -9,6 +12,12 @@ class RandomAgent:
 
     name: str = "RandomAgent"
 
-    def choose_move(self, board: Board) -> Move:
-        """Choose a random legal move. Stub — to be implemented in Area 1."""
-        raise NotImplementedError("RandomAgent not yet implemented")
+    def __init__(self, seed: int | None = None) -> None:
+        self._rng = random.Random(seed)
+
+    def choose_move(self, board: Board, variant: str = "standard") -> Move:
+        """Choose a random legal move for the given variant."""
+        moves = get_generate_legal_moves(variant)(board)
+        if not moves:
+            raise ValueError("No legal moves available")
+        return self._rng.choice(moves)

@@ -568,7 +568,7 @@ def _render_live_panel(board_ph=None) -> None:
     ANIMATION_DURATION = 10.0
     MOVE_INTERVAL = 0.012   # target ~80 moves/sec — render+network usually
                             # caps real rate around 40-50/sec, looks like a blur
-    EXPLOSION_HOLD = 0.40   # hold an atomic explosion frame so the red flash is visible
+    EXPLOSION_HOLD = 0.15   # brief red flash hold so the explosion reads
     PROGRESS_INTERVAL = 0.22
     TICK = 0.005
 

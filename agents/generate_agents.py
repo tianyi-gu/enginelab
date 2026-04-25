@@ -4,7 +4,7 @@ Dual-mode generation:
 - Exhaustive if 2^n - 1 <= max_agents
 - Stratified sampling otherwise (all singles, all pairs, full set,
   random larger subsets)
-- LLM-guided: DeepSeek selects best n features, then exhaustive over all subsets
+- LLM-guided: OpenAI selects best n features, then exhaustive over all subsets
 """
 
 import random
@@ -37,22 +37,21 @@ def generate_llm_selected_agents(
     feature_names: list[str],
     feature_descriptions: dict[str, str],
     variant: str,
-    base_url: str = "http://localhost:11434/v1",
-    api_key: str = "ollama",
-    model: str = "deepseek-r1:7b",
+    api_key: str | None = None,
+    model: str = "gpt-4o-mini",
     n_select: int = 7,
     cache_path: str = "outputs/llm_feature_cache.json",
     refresh: bool = False,
 ) -> list[FeatureSubsetAgent]:
-    """Use a local DeepSeek model (via Ollama) to pick the best n_select features,
-    then exhaustively generate all subsets.
+    """Use OpenAI to pick the best n_select features, then exhaustively generate all subsets.
 
     With n_select=7: produces 2^7 - 1 = 127 agents.
-    Caches the selection to avoid repeated LLM calls; pass refresh=True to force a new call.
+    api_key defaults to OPENAI_API_KEY env var if not provided.
+    Caches the selection to avoid repeated API calls; pass refresh=True to force a new call.
     """
     selected = _llm_select_features(
         feature_names, feature_descriptions, variant,
-        base_url, api_key, model, n_select, cache_path, refresh,
+        api_key, model, n_select, cache_path, refresh,
     )
     return _exhaustive(selected)
 
@@ -61,14 +60,13 @@ def _llm_select_features(
     feature_names: list[str],
     feature_descriptions: dict[str, str],
     variant: str,
-    base_url: str,
-    api_key: str,
+    api_key: str | None,
     model: str,
     n_select: int,
     cache_path: str,
     refresh: bool,
 ) -> list[str]:
-    """Call a local DeepSeek model via Ollama to select the best n_select features."""
+    """Call OpenAI to select the best n_select features."""
     import json
     import os
 
@@ -107,7 +105,8 @@ def _llm_select_features(
             "openai package required for LLM feature selection: pip install openai"
         )
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    # api_key=None → OpenAI client reads OPENAI_API_KEY from environment
+    client = OpenAI(api_key=api_key)
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],

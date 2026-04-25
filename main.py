@@ -86,9 +86,9 @@ def tournament(
     seed: int = typer.Option(42, help="Random seed"),
     max_agents: int = typer.Option(127, help="Max number of agents"),
     output: str = typer.Option(None, help="Output JSON path"),
-    use_llm: bool = typer.Option(False, "--use-llm/--no-use-llm", help="Use local DeepSeek (Ollama) to select features"),
-    ollama_model: str = typer.Option("deepseek-r1:7b", "--ollama-model", help="Ollama model name"),
-    ollama_url: str = typer.Option("http://localhost:11434/v1", "--ollama-url", help="Ollama base URL"),
+    use_llm: bool = typer.Option(False, "--use-llm/--no-use-llm", help="Use OpenAI to select features"),
+    openai_model: str = typer.Option("gpt-4o-mini", "--openai-model", help="OpenAI model name"),
+    openai_api_key: str = typer.Option(None, "--openai-api-key", help="OpenAI API key (default: OPENAI_API_KEY env var)"),
     refresh_llm: bool = typer.Option(False, "--refresh-llm", help="Ignore cached LLM feature selection"),
     workers: int = typer.Option(0, "--workers", help="Parallel game workers (0=auto, 1=sequential)"),
 ) -> None:
@@ -99,7 +99,7 @@ def tournament(
     from tournament.results_io import save_results_json
 
     agents = _get_agents(max_agents=max_agents, seed=seed, use_llm=use_llm,
-                         ollama_model=ollama_model, ollama_url=ollama_url,
+                         openai_model=openai_model, openai_api_key=openai_api_key,
                          variant=variant, refresh_llm=refresh_llm)
     console.print(f"[bold]Tournament[/bold]: {len(agents)} agents, {variant}")
     console.print(f"Games: {len(agents) * (len(agents) - 1)}")
@@ -156,9 +156,9 @@ def full_pipeline(
     seed: int = typer.Option(42, help="Random seed"),
     max_agents: int = typer.Option(127, help="Max number of agents"),
     top_k: int = typer.Option(10, help="Top-K for marginal analysis"),
-    use_llm: bool = typer.Option(False, "--use-llm/--no-use-llm", help="Use local DeepSeek (Ollama) to select features"),
-    ollama_model: str = typer.Option("deepseek-r1:7b", "--ollama-model", help="Ollama model name"),
-    ollama_url: str = typer.Option("http://localhost:11434/v1", "--ollama-url", help="Ollama base URL"),
+    use_llm: bool = typer.Option(False, "--use-llm/--no-use-llm", help="Use OpenAI to select features"),
+    openai_model: str = typer.Option("gpt-4o-mini", "--openai-model", help="OpenAI model name"),
+    openai_api_key: str = typer.Option(None, "--openai-api-key", help="OpenAI API key (default: OPENAI_API_KEY env var)"),
     refresh_llm: bool = typer.Option(False, "--refresh-llm", help="Ignore cached LLM feature selection"),
     workers: int = typer.Option(0, "--workers", help="Parallel game workers (0=auto, 1=sequential)"),
 ) -> None:
@@ -179,7 +179,7 @@ def full_pipeline(
 
     # Step 1: Generate agents
     agents = _get_agents(max_agents=max_agents, seed=seed, use_llm=use_llm,
-                         ollama_model=ollama_model, ollama_url=ollama_url,
+                         openai_model=openai_model, openai_api_key=openai_api_key,
                          variant=variant, refresh_llm=refresh_llm)
     feature_names = sorted({f for a in agents for f in a.features})
     console.print(f"Features: {', '.join(feature_names)}")
@@ -234,8 +234,8 @@ def _get_agents(
     max_agents: int = 127,
     seed: int = 42,
     use_llm: bool = False,
-    ollama_model: str = "deepseek-r1:7b",
-    ollama_url: str = "http://localhost:11434/v1",
+    openai_model: str = "gpt-4o-mini",
+    openai_api_key: str | None = None,
     variant: str = "standard",
     refresh_llm: bool = False,
 ):
@@ -246,10 +246,10 @@ def _get_agents(
         try:
             from agents.generate_agents import generate_llm_selected_agents
             from features.registry import get_feature_names, FEATURE_DESCRIPTIONS
-            console.print(f"[bold]LLM mode:[/bold] asking {ollama_model} to select best 7 features...")
+            console.print(f"[bold]LLM mode:[/bold] asking {openai_model} to select best 7 features...")
             agents = generate_llm_selected_agents(
                 get_feature_names(), FEATURE_DESCRIPTIONS, variant,
-                base_url=ollama_url, model=ollama_model, refresh=refresh_llm,
+                api_key=openai_api_key, model=openai_model, refresh=refresh_llm,
             )
             # Show which features were selected (all agents share the same feature universe)
             all_features = sorted({f for a in agents for f in a.features})

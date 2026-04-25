@@ -678,8 +678,10 @@ def _render_analysis_panel() -> None:
         b = FEATURE_DISPLAY_NAMES.get(r.feature_b, r.feature_b)
         return f"{a[:13]}+{b[:13]}"
 
-    tab_engine, tab_features, tab_synergy, tab_lb = st.tabs(
-        ["Best Engine", "Features", "Synergy", "Leaderboard"]
+    results_data = st.session_state.get("results") or []
+
+    tab_engine, tab_features, tab_synergy, tab_stats, tab_lb = st.tabs(
+        ["Best Engine", "Features", "Synergy", "Stats", "Leaderboard"]
     )
 
     # Tab 1: Best Engine
@@ -755,6 +757,32 @@ def _render_analysis_panel() -> None:
                 "Marginal contribution: avg score _with_ this feature minus avg score _without_ it."
             )
 
+            # Top-K frequency chart
+            freq_data = [(FEATURE_DISPLAY_NAMES.get(r.feature, r.feature), r.top_k_frequency)
+                         for r in sorted_m]
+            freq_data.sort(key=lambda x: x[1], reverse=True)
+            if any(f > 0 for _, f in freq_data):
+                st.markdown('<div style="margin-top:16px;"></div>', unsafe_allow_html=True)
+                fig_freq = go.Figure(go.Bar(
+                    x=[f for _, f in freq_data],
+                    y=[n for n, _ in freq_data],
+                    orientation="h",
+                    marker_color="#81b29a",
+                    hovertemplate="%{y}: %{x:.0%}<extra></extra>",
+                ))
+                fig_freq.update_layout(
+                    height=260,
+                    margin=dict(l=0, r=10, t=6, b=0),
+                    yaxis=dict(autorange="reversed"),
+                    xaxis_title="Frequency in top-10 agents",
+                    xaxis=dict(tickformat=".0%"),
+                    **_CHART_THEME,
+                )
+                st.plotly_chart(fig_freq, use_container_width=True)
+                st.caption(
+                    "How often each feature appears in the top-10 performing agents."
+                )
+
     # Tab 3: Synergy
     with tab_synergy:
         if not synergies:
@@ -794,7 +822,167 @@ def _render_analysis_panel() -> None:
             )
             st.plotly_chart(fig_neg, use_container_width=True)
 
-    # Tab 4: Leaderboard
+            # Full synergy heatmap
+            feat_set = sorted({r.feature_a for r in synergies} | {r.feature_b for r in synergies})
+            if len(feat_set) >= 3:
+                st.markdown('<div style="margin-top:16px;"></div>', unsafe_allow_html=True)
+                st.caption("Full synergy matrix")
+                syn_map = {}
+                for r in synergies:
+                    syn_map[(r.feature_a, r.feature_b)] = r.synergy
+                    syn_map[(r.feature_b, r.feature_a)] = r.synergy
+                feat_labels = [FEATURE_DISPLAY_NAMES.get(f, f) for f in feat_set]
+                z = []
+                for fa in feat_set:
+                    row = []
+                    for fb in feat_set:
+                        if fa == fb:
+                            row.append(0.0)
+                        else:
+                            row.append(syn_map.get((fa, fb), 0.0))
+                    z.append(row)
+                fig_heat = go.Figure(go.Heatmap(
+                    z=z, x=feat_labels, y=feat_labels,
+                    colorscale=[[0, "#c84b4b"], [0.5, "#1f1e1c"], [1, "#629924"]],
+                    zmid=0,
+                    hovertemplate="%{y} + %{x}: %{z:+.4f}<extra></extra>",
+                ))
+                fig_heat.update_layout(
+                    height=350,
+                    margin=dict(l=0, r=10, t=6, b=0),
+                    xaxis=dict(tickangle=45),
+                    **_CHART_THEME,
+                )
+                st.plotly_chart(fig_heat, use_container_width=True)
+
+    # Tab 4: Stats
+    with tab_stats:
+        if not results_data and not lb:
+            st.caption("No data available.")
+        else:
+            stat_cols = st.columns(2)
+
+            # Score distribution histogram
+            with stat_cols[0]:
+                if lb:
+                    scores = [r.score_rate for r in lb]
+                    fig_dist = go.Figure(go.Histogram(
+                        x=scores, nbinsx=20,
+                        marker_color="#629924",
+                        hovertemplate="Score: %{x:.3f}<br>Count: %{y}<extra></extra>",
+                    ))
+                    fig_dist.update_layout(
+                        title=dict(text="Score Distribution", font=dict(size=13, color="#d0cfc8")),
+                        height=260,
+                        margin=dict(l=0, r=10, t=30, b=0),
+                        xaxis_title="Score rate",
+                        yaxis_title="Agents",
+                        **_CHART_THEME,
+                    )
+                    st.plotly_chart(fig_dist, use_container_width=True)
+
+            # Game length distribution
+            with stat_cols[1]:
+                if results_data:
+                    lengths = [r.moves for r in results_data]
+                    fig_len = go.Figure(go.Histogram(
+                        x=lengths, nbinsx=25,
+                        marker_color="#81b29a",
+                        hovertemplate="Moves: %{x}<br>Games: %{y}<extra></extra>",
+                    ))
+                    fig_len.update_layout(
+                        title=dict(text="Game Length Distribution", font=dict(size=13, color="#d0cfc8")),
+                        height=260,
+                        margin=dict(l=0, r=10, t=30, b=0),
+                        xaxis_title="Moves (plies)",
+                        yaxis_title="Games",
+                        **_CHART_THEME,
+                    )
+                    st.plotly_chart(fig_len, use_container_width=True)
+
+            stat_cols2 = st.columns(2)
+
+            # Win/Draw/Loss breakdown for top agents
+            with stat_cols2[0]:
+                if lb:
+                    top_n = lb[:10]
+                    agent_labels = [_agent_short_name(r.agent_name)[:20] for r in top_n]
+                    fig_wdl = go.Figure()
+                    fig_wdl.add_trace(go.Bar(
+                        y=agent_labels, x=[r.wins for r in top_n],
+                        name="Wins", orientation="h", marker_color="#629924",
+                    ))
+                    fig_wdl.add_trace(go.Bar(
+                        y=agent_labels, x=[r.draws for r in top_n],
+                        name="Draws", orientation="h", marker_color="#7a7775",
+                    ))
+                    fig_wdl.add_trace(go.Bar(
+                        y=agent_labels, x=[r.losses for r in top_n],
+                        name="Losses", orientation="h", marker_color="#c84b4b",
+                    ))
+                    fig_wdl.update_layout(
+                        barmode="stack",
+                        title=dict(text="Top Agents: W/D/L", font=dict(size=13, color="#d0cfc8")),
+                        height=300,
+                        margin=dict(l=0, r=10, t=30, b=0),
+                        yaxis=dict(autorange="reversed"),
+                        legend=dict(orientation="h", y=-0.15),
+                        **_CHART_THEME,
+                    )
+                    st.plotly_chart(fig_wdl, use_container_width=True)
+
+            # Termination reasons pie chart
+            with stat_cols2[1]:
+                if results_data:
+                    from collections import Counter
+                    reasons = Counter(r.termination_reason for r in results_data)
+                    reason_labels = list(reasons.keys())
+                    reason_values = list(reasons.values())
+                    reason_colors = {
+                        "checkmate": "#629924", "stalemate": "#7a7775",
+                        "move_cap": "#e6c86e", "king_exploded": "#c84b4b",
+                        "draw": "#81b29a",
+                    }
+                    colors = [reason_colors.get(r, "#bababa") for r in reason_labels]
+                    fig_term = go.Figure(go.Pie(
+                        labels=reason_labels, values=reason_values,
+                        marker=dict(colors=colors),
+                        hovertemplate="%{label}: %{value} (%{percent})<extra></extra>",
+                        textinfo="label+percent",
+                        textfont=dict(size=11),
+                    ))
+                    fig_term.update_layout(
+                        title=dict(text="Termination Reasons", font=dict(size=13, color="#d0cfc8")),
+                        height=300,
+                        margin=dict(l=0, r=10, t=30, b=0),
+                        showlegend=False,
+                        **_CHART_THEME,
+                    )
+                    st.plotly_chart(fig_term, use_container_width=True)
+
+            # Feature count vs score scatter
+            if lb and len(lb) > 3:
+                fig_scatter = go.Figure(go.Scatter(
+                    x=[len(r.features) for r in lb],
+                    y=[r.score_rate for r in lb],
+                    mode="markers",
+                    marker=dict(color="#629924", size=6, opacity=0.7),
+                    hovertemplate=(
+                        "%{text}<br>Features: %{x}<br>Score: %{y:.4f}<extra></extra>"
+                    ),
+                    text=[_agent_short_name(r.agent_name)[:30] for r in lb],
+                ))
+                fig_scatter.update_layout(
+                    title=dict(text="Feature Count vs Score", font=dict(size=13, color="#d0cfc8")),
+                    height=260,
+                    margin=dict(l=0, r=10, t=30, b=0),
+                    xaxis_title="Number of features",
+                    yaxis_title="Score rate",
+                    **_CHART_THEME,
+                )
+                st.plotly_chart(fig_scatter, use_container_width=True)
+
+    # Tab 5: Leaderboard
     with tab_lb:
         if lb:
             rows = [

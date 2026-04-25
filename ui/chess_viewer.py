@@ -602,33 +602,25 @@ function doPromo(p) {
 }
 
 // ── Move → Streamlit via URL query param ──────────────────────────────────────
-// Uses pushState + popstate so the page does NOT reload — Streamlit's
-// query-params watcher detects the change and re-runs while keeping
-// session state intact.  Falls back to full navigation if cross-origin
-// access blocks history manipulation.
 function sendMove(uci) {
   try {
-    var w = window.parent;
-    var url = new URL(w.location.href);
+    var url = new URL(window.parent.location.href);
     url.searchParams.set('chess_move', uci);
-    w.history.pushState({}, '', url.toString());
-    w.dispatchEvent(new PopStateEvent('popstate'));
+    window.parent.location.href = url.toString();
   } catch(e) {
-    try {
-      window.parent.location.search = '?chess_move=' + encodeURIComponent(uci);
-    } catch(e2) {
-      window.top.location.search = '?chess_move=' + encodeURIComponent(uci);
-    }
+    window.top.location.search = '?chess_move=' + uci;
   }
 }
 
-// ── DRAG — pointer events + setPointerCapture ─────────────────────────────────
+// ── DRAG — threshold-based, does NOT prevent click on tap ────────────────────
 //
-// setPointerCapture keeps pointer events on the capturing element even when
-// the pointer leaves the iframe.  This is the same technique used by Lichess's
-// chessground library for reliable iframe drag.
+// Key insight: e.preventDefault() on pointerdown kills the subsequent click
+// event.  We defer preventDefault until the pointer has actually moved (drag
+// threshold), so a simple tap always falls through to the click handler below.
 //
-var drag = null;
+var drag = null;          // set only after threshold crossed
+var dragCandidate = null; // set on pointerdown, cleared on pointerup/cancel
+var dragDone = false;     // flag: suppress click after a completed drag-move
 
 wrap.addEventListener('pointerdown', function(e) {
   if (STATUS !== 'ongoing') return;
@@ -636,57 +628,69 @@ wrap.addEventListener('pointerdown', function(e) {
   while (el && el !== wrap && !(el.tagName === 'IMG' && el.dataset.sq))
     el = el.parentElement;
   if (!el || el === wrap) return;
-  var sq   = el.dataset.sq;
-  var code = el.dataset.code;
+  var sq = el.dataset.sq, code = el.dataset.code;
   if (!code || code[0] !== 'w' || !lmap[sq] || !lmap[sq].length) return;
 
-  e.preventDefault();
-  el.setPointerCapture(e.pointerId);  // keep events in iframe even outside bounds
-
-  clearSel(); selected = null;
-  drag = {sq:sq, code:code, el:el};
-  el.style.opacity = '.25';
-
-  ghost.src = pimg(code);
-  ghost.style.cssText = (
-    'position:fixed;pointer-events:none;z-index:9999;display:block;' +
-    'width:'+SQ+'px;height:'+SQ+'px;' +
-    'left:'+(e.clientX-SQ/2)+'px;top:'+(e.clientY-SQ/2)+'px'
-  );
-  showDots(sq);
-}, {passive:false});
+  // NO e.preventDefault() here — click must be allowed to fire on a tap
+  el.setPointerCapture(e.pointerId);
+  dragCandidate = {sq:sq, code:code, el:el, x0:e.clientX, y0:e.clientY};
+  ghost.src = pimg(code);  // pre-load image
+});
 
 wrap.addEventListener('pointermove', function(e) {
-  if (!drag) return;
-  e.preventDefault();
-  ghost.style.left = (e.clientX-SQ/2)+'px';
-  ghost.style.top  = (e.clientY-SQ/2)+'px';
+  if (!dragCandidate) return;
+  var dx = e.clientX - dragCandidate.x0, dy = e.clientY - dragCandidate.y0;
+  if (!drag && dx*dx + dy*dy > 64) {   // 8 px threshold
+    // Threshold crossed — promote candidate to active drag
+    drag = dragCandidate;
+    e.preventDefault();                // NOW prevent scroll / click
+    clearSel(); selected = null;
+    showDots(drag.sq);
+    drag.el.style.opacity = '.25';
+    ghost.style.cssText = (
+      'position:fixed;pointer-events:none;z-index:9999;display:block;' +
+      'width:'+SQ+'px;height:'+SQ+'px;' +
+      'left:'+(e.clientX-SQ/2)+'px;top:'+(e.clientY-SQ/2)+'px'
+    );
+  }
+  if (drag) {
+    ghost.style.left = (e.clientX-SQ/2)+'px';
+    ghost.style.top  = (e.clientY-SQ/2)+'px';
+  }
 }, {passive:false});
 
 wrap.addEventListener('pointerup', function(e) {
-  if (!drag) return;
-  e.preventDefault();
+  if (!dragCandidate) return;
+  var cand = dragCandidate;
+  dragCandidate = null;
+  if (!drag) return;   // was just a tap — let click handler deal with it
+
   ghost.style.display = 'none';
   drag.el.style.opacity = '';
   var rect = wrap.getBoundingClientRect();
   var to   = xySq(e.clientX-rect.left, e.clientY-rect.top);
   var from = drag.sq, code = drag.code;
   clearSel(); drag = null;
-  if (to && lmap[from] && lmap[from].indexOf(to) !== -1) tryMove(from, to, code);
+  if (to && lmap[from] && lmap[from].indexOf(to) !== -1) {
+    dragDone = true;    // tell click handler to skip this event
+    tryMove(from, to, code);
+  }
 });
 
 wrap.addEventListener('pointercancel', function() {
+  dragCandidate = null;
   if (!drag) return;
   ghost.style.display = 'none';
   drag.el.style.opacity = '';
   clearSel(); drag = null;
 });
 
-// ── CLICK-TO-MOVE (tap / accessibility fallback) ──────────────────────────────
+// ── CLICK-TO-MOVE ─────────────────────────────────────────────────────────────
 var selected = null;
 
 wrap.addEventListener('click', function(e) {
-  if (STATUS !== 'ongoing' || drag) return;
+  if (STATUS !== 'ongoing') return;
+  if (dragDone) { dragDone = false; return; }  // was a drag, not a click
   var rect = wrap.getBoundingClientRect();
   var sq   = xySq(e.clientX-rect.left, e.clientY-rect.top);
   if (!sq) return;
@@ -712,6 +716,12 @@ wrap.addEventListener('click', function(e) {
 """
 
 
+import os as _os
+_CHESS_DND_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                "components", "chess_dnd")
+_chess_dnd_component = components.declare_component("chess_dnd", path=_CHESS_DND_DIR)
+
+
 def chess_play_dnd(
     fen: str,
     legal_moves: list[str],
@@ -720,29 +730,30 @@ def chess_play_dnd(
     exploded_squares: list[str] | None = None,
     board_size: int = 460,
     height: int = 520,
-) -> None:
-    """Render an interactive chess board for play.
+    key: str = "chess_dnd",
+) -> dict | None:
+    """Render an interactive drag-and-drop chess board.
 
-    Uses pointer events + setPointerCapture for reliable drag-and-drop
-    inside Streamlit iframes.  Click-to-move works as a tap/fallback.
-    Moves are sent to Streamlit via URL query params → st.query_params.
+    Returns the value the component last set, or None if no move has been
+    made yet.  When the user makes a move, the component returns
+    {"uci": "<uci>", "id": <unique>}; the caller should compare `id`
+    against the previously-seen value to know whether this is a new move.
     """
     lm_squares = (
         [last_move_uci[:2], last_move_uci[2:4]]
         if last_move_uci and len(last_move_uci) >= 4 else []
     )
-
-    html = (
-        _DND_TEMPLATE
-        .replace("'__FEN__'",            "'" + fen + "'")
-        .replace("__LEGAL_MOVES__",       json.dumps(legal_moves))
-        .replace("'__STATUS__'",          "'" + status + "'")
-        .replace("__LAST_MOVE_SQUARES__", json.dumps(lm_squares))
-        .replace("__EXPLODED_SQUARES__",  json.dumps(exploded_squares or []))
-        .replace("'__PIECE_THEME__'",     "'" + _PIECE_THEME_URL + "'")
-        .replace("__BOARD_SIZE__",        str(board_size))
+    return _chess_dnd_component(
+        fen=fen,
+        legal_moves=legal_moves,
+        status=status,
+        last_move_squares=lm_squares,
+        exploded_squares=exploded_squares or [],
+        piece_theme=_PIECE_THEME_URL,
+        board_size=board_size,
+        key=key,
+        default=None,
     )
-    components.html(html, height=height, scrolling=False)
 
 
 # ---------------------------------------------------------------------------

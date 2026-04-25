@@ -427,22 +427,14 @@ def _render_board_area() -> None:
         )
         depth = snap.get("depth", st.session_state.get("depth", 2))
 
-        # Check for drag-and-drop move via query params
-        if "chess_move" in st.query_params:
-            uci = st.query_params["chess_move"]
-            del st.query_params["chess_move"]
-            legal = get_legal_moves_uci(fen, variant)
-            if uci in legal:
-                _handle_player_move(uci, variant, depth)
-            return
-
         # Get legal moves for the current position
-        legal = []
+        legal: list[str] = []
         if status == "ongoing":
             legal = get_legal_moves_uci(fen, variant)
 
-        # Render interactive drag-and-drop board
-        chess_play_dnd(
+        # Render interactive board; component returns {"uci": ..., "id": ...}
+        # when the user makes a move, or None otherwise.
+        result = chess_play_dnd(
             fen=fen,
             legal_moves=legal,
             status=status,
@@ -450,6 +442,14 @@ def _render_board_area() -> None:
             exploded_squares=exploded,
             height=520,
         )
+
+        # Apply move only when a *new* move arrives (id changed since last apply)
+        if isinstance(result, dict) and result.get("uci"):
+            move_id = result.get("id")
+            if move_id != st.session_state.get("_last_applied_move_id"):
+                st.session_state["_last_applied_move_id"] = move_id
+                if result["uci"] in legal:
+                    _handle_player_move(result["uci"], variant, depth)
         return
 
     from ui.chess_viewer import chess_play_dnd
@@ -458,6 +458,7 @@ def _render_board_area() -> None:
         legal_moves=[],
         status="ended",
         height=520,
+        key="chess_dnd_static",
     )
 
 
@@ -1117,16 +1118,17 @@ def _render_play_panel() -> None:
             if not legal:
                 st.warning("No legal moves!")
             else:
-                st.caption("Drag a piece or click it, then click a highlighted square")
-                mc1, mc2 = st.columns([4, 1])
-                selected = mc1.selectbox(
-                    "Or pick UCI move",
-                    options=legal,
-                    key="play_move_select",
-                    label_visibility="collapsed",
-                )
-                if mc2.button("Go", use_container_width=True):
-                    _handle_player_move(selected, variant, depth)
+                st.caption("Drag a piece, or click it then click a highlighted square.")
+                with st.expander("Or pick a UCI move", expanded=False):
+                    mc1, mc2 = st.columns([4, 1])
+                    selected = mc1.selectbox(
+                        "UCI move",
+                        options=legal,
+                        key="play_move_select",
+                        label_visibility="collapsed",
+                    )
+                    if mc2.button("Go", use_container_width=True):
+                        _handle_player_move(selected, variant, depth)
         else:
             # Engine's turn — safety net (normally processed immediately)
             st.info(f"{best_name} is thinking...")

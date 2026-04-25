@@ -1,4 +1,4 @@
-"""Tests for all 10 evaluation features."""
+"""Tests for all evaluation features."""
 
 import pytest
 
@@ -8,13 +8,14 @@ from features.registry import FEATURES, get_feature_names, get_feature_function
 
 class TestFeatureRegistry:
     def test_ten_features_registered(self):
-        assert len(FEATURES) == 10
+        assert len(FEATURES) == 12
 
     def test_all_feature_names(self):
         expected = {
             "material", "piece_position", "center_control", "king_safety",
             "enemy_king_danger", "mobility", "pawn_structure", "bishop_pair",
             "rook_activity", "capture_threats",
+            "antichess_material", "explosion_proximity",
         }
         assert set(get_feature_names()) == expected
 

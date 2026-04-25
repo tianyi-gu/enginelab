@@ -33,7 +33,7 @@ simulation/__init__.py, simulation/game.py
 You are building the Foundation of EngineLab: a complete, runnable standard
 chess engine that other developers will build on.
 
-Read Instructions.MD and docs/interfaces.md completely before starting.
+Read Instructions.md and docs/interfaces.md completely before starting.
 
 Implement:
 1. Board class (core/board.py): 8x8 grid, FEN piece chars, deep copy,

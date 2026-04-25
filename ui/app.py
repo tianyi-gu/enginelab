@@ -568,6 +568,7 @@ def _render_live_panel(board_ph=None) -> None:
     ANIMATION_DURATION = 10.0
     MOVE_INTERVAL = 0.012   # target ~80 moves/sec — render+network usually
                             # caps real rate around 40-50/sec, looks like a blur
+    EXPLOSION_HOLD = 0.40   # hold an atomic explosion frame so the red flash is visible
     PROGRESS_INTERVAL = 0.22
     TICK = 0.005
 
@@ -628,12 +629,13 @@ def _render_live_panel(board_ph=None) -> None:
 
             if move_idx < len(cur_game):
                 uci = cur_game[move_idx]
+                exploded_now: list[str] | None = None
                 try:
-                    new_fen, exploded = _animate_step(current_fen, uci)
+                    new_fen, exploded_now = _animate_step(current_fen, uci)
                     svg = render_board(
                         new_fen,
                         last_move_uci=uci,
-                        exploded_squares=exploded,
+                        exploded_squares=exploded_now,
                         size=_BOARD_PX,
                     )
                     board_ph.markdown(_svg_html(svg), unsafe_allow_html=True)
@@ -642,7 +644,10 @@ def _render_live_panel(board_ph=None) -> None:
                 except Exception:
                     # Move not applicable under variant rules — end this game
                     move_idx = len(cur_game)
-            next_move_at = elapsed + MOVE_INTERVAL
+            # Hold longer if this frame is an explosion so the red flash is visible
+            next_move_at = elapsed + (
+                EXPLOSION_HOLD if exploded_now else MOVE_INTERVAL
+            )
 
         time.sleep(TICK)
 

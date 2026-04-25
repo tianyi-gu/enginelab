@@ -1764,9 +1764,9 @@ Report saved: outputs/reports/atomic_strategy_report.md
 
 ## 14. Hackathon Execution Strategy
 
-### Hour-by-Hour Plan (for a ~12-hour hackathon, 2 developers)
+### Development Plan
 
-| Hours  | Developer 1 (ENGINE)                  | Developer 2 (HARNESS)                |
+| Phases  | Developer 1 (ENGINE)                  | Developer 2 (HARNESS)                |
 |--------|---------------------------------------|--------------------------------------|
 | 0-1    | Build Foundation on `main` together   | Build Foundation on `main` together  |
 | 1-1.5  | Branch `area-1-engine`                | Branch `area-2-harness`              |
@@ -1787,14 +1787,6 @@ Report saved: outputs/reports/atomic_strategy_report.md
 2. **Should have:** Clean leaderboard + marginals output in terminal
 3. **Nice to have:** Synergy analysis, charts, interpretation paragraph
 4. **Stretch:** Streamlit UI
-
-### Demo Tips
-
-- Run with 3 features (7 agents, 42 games) for a live demo -- finishes in
-  under a minute.
-- Have pre-computed 10-feature results ready to show.
-- Lead with the factor-analysis analogy when presenting to Point 72 judges.
-- Show the Markdown report as the polished deliverable.
 
 ---
 

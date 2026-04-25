@@ -1,248 +1,222 @@
-import sys
+from __future__ import annotations
+
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import threading
 import time
 
+import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from ui.constants import (
     ALL_FEATURES,
+    COLOR_NEGATIVE,
+    COLOR_NEUTRAL,
+    COLOR_POSITIVE,
     FEATURE_DISPLAY_NAMES,
-    VARIANT_DESCRIPTIONS,
     SESSION_DEFAULTS,
+    VARIANT_DESCRIPTIONS,
 )
 
 st.set_page_config(
     page_title="EngineLab",
     page_icon="♟",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
+# ---------------------------------------------------------------------------
+# Presets
+# ---------------------------------------------------------------------------
+
+PRESETS: list[dict] = [
+    {
+        "label": "⚡ Debug",
+        "desc": "3 features · 7 agents · 42 games",
+        "features": ["material", "mobility", "king_safety"],
+    },
+    {
+        "label": "Demo",
+        "desc": "5 features · 31 agents · 930 games",
+        "features": ["material", "mobility", "king_safety", "enemy_king_danger", "capture_threats"],
+    },
+    {
+        "label": "Full",
+        "desc": "10 features · ~87 agents · ~7,500 games",
+        "features": list(ALL_FEATURES),
+    },
+]
 
 # ---------------------------------------------------------------------------
 # Session state
 # ---------------------------------------------------------------------------
 
 def _init_session_state() -> None:
-    """Initialise all session state keys to their defaults on first load."""
     for key, default in SESSION_DEFAULTS.items():
         if key not in st.session_state:
-            st.session_state[key] = (
-                list(default) if isinstance(default, list) else default
-            )
+            st.session_state[key] = list(default) if isinstance(default, list) else default
 
 
 # ---------------------------------------------------------------------------
-# Estimation helpers
+# Tournament thread
 # ---------------------------------------------------------------------------
 
-def _estimate_agents(n_features: int, max_agents: int = 100) -> int:
-    """Estimate agent count as min(2^n - 1, max_agents)."""
-    exhaustive = 2 ** n_features - 1
-    return min(exhaustive, max_agents)
-
-
-def _estimate_games(n_agents: int) -> int:
-    """Estimate game count as n_agents * (n_agents - 1)."""
-    return n_agents * (n_agents - 1)
-
-
-# ---------------------------------------------------------------------------
-# Tournament background thread
-# ---------------------------------------------------------------------------
-
-def _run_tournament_thread(config: dict) -> None:
-    """Background thread: run tournament and populate session state."""
+def _run_tournament(config: dict) -> None:
     try:
-        _execute_tournament(config)
-    except Exception as e:
-        import traceback
+        from agents.generate_agents import generate_feature_subset_agents
+        from analysis.feature_marginals import compute_feature_marginals
+        from analysis.interpretation import generate_interpretation
+        from analysis.synergy import compute_pairwise_synergies
+        from reports.markdown_report import generate_markdown_report
+        from tournament.leaderboard import compute_leaderboard
+        from tournament.round_robin import run_round_robin
+        import pathlib
 
-        st.session_state["error"] = (
-            f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
+        st.session_state["start_time"] = time.time()
+
+        agents = generate_feature_subset_agents(
+            config["selected_features"], max_agents=100, seed=config["seed"]
         )
+        st.session_state["agents"] = agents
+        total = len(agents) * (len(agents) - 1)
+        st.session_state["total_games"] = total
+
+        def _on_game(done: int, total: int) -> None:
+            st.session_state["games_completed"] = done
+            st.session_state["progress"] = done / total if total else 0.0
+
+        results = run_round_robin(
+            agents=agents,
+            variant=config["variant"],
+            depth=config["depth"],
+            max_moves=config["max_moves"],
+            seed=config["seed"],
+            workers=config["workers"],
+            on_game_complete=_on_game,
+        )
+        st.session_state["results"] = results
+
+        leaderboard = compute_leaderboard(results, agents)
+        marginals = compute_feature_marginals(leaderboard, config["selected_features"])
+        synergies = compute_pairwise_synergies(leaderboard, config["selected_features"])
+        interpretation = generate_interpretation(
+            leaderboard[0] if leaderboard else None, marginals, synergies, config["variant"]
+        )
+
+        out = pathlib.Path("outputs/reports")
+        out.mkdir(parents=True, exist_ok=True)
+        report_path = str(out / f"{config['variant']}_strategy_report.md")
+        generate_markdown_report(
+            variant=config["variant"],
+            feature_names=config["selected_features"],
+            leaderboard=leaderboard,
+            marginals=marginals,
+            synergies=synergies,
+            interpretation=interpretation,
+            output_path=report_path,
+            config=config,
+        )
+        report_md = pathlib.Path(report_path).read_text()
+
+        st.session_state.update(
+            leaderboard=leaderboard,
+            marginals=marginals,
+            synergies=synergies,
+            interpretation=interpretation,
+            report_md=report_md,
+            config_snapshot=config,
+            duration_seconds=time.time() - st.session_state["start_time"],
+        )
+    except Exception as exc:
+        import traceback
+        st.session_state["error"] = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
     finally:
         st.session_state["running"] = False
 
 
-def _execute_tournament(config: dict) -> None:
-    """Inner tournament execution — imports and runs the full pipeline."""
-    import pathlib
-
-    from agents.generate_agents import generate_feature_subset_agents
-    from tournament.round_robin import run_round_robin
-    from tournament.leaderboard import compute_leaderboard
-    from analysis.feature_marginals import compute_feature_marginals
-    from analysis.synergy import compute_pairwise_synergies
-    from analysis.interpretation import generate_interpretation
-    from reports.markdown_report import generate_markdown_report
-
-    st.session_state["start_time"] = time.time()
-
-    agents = generate_feature_subset_agents(
-        config["selected_features"],
-        max_agents=100,
-        seed=config["seed"],
-    )
-    st.session_state["agents"] = agents
-    total = len(agents) * (len(agents) - 1)
-    st.session_state["total_games"] = total
-
-    results = _run_round_robin_with_progress(agents, config)
-    st.session_state["results"] = results
-
-    leaderboard = compute_leaderboard(results, agents)
-    marginals = compute_feature_marginals(leaderboard, config["selected_features"])
-    synergies = compute_pairwise_synergies(leaderboard, config["selected_features"])
-    interpretation = generate_interpretation(
-        leaderboard[0] if leaderboard else None,
-        marginals,
-        synergies,
-        config["variant"],
-    )
-    report_md = _write_markdown_report(
-        config, leaderboard, marginals, synergies, interpretation,
-        generate_markdown_report, pathlib,
-    )
-
-    st.session_state.update({
-        "leaderboard": leaderboard,
-        "marginals": marginals,
-        "synergies": synergies,
-        "interpretation": interpretation,
-        "report_md": report_md,
-        "config_snapshot": config,
-        "duration_seconds": time.time() - st.session_state["start_time"],
-    })
-
-
-def _run_round_robin_with_progress(agents: list, config: dict) -> list:
-    """Run round-robin tournament with a progress callback."""
-    from tournament.round_robin import run_round_robin
-
-    total = st.session_state.get("total_games", 1)
-
-    def on_game_complete(done: int, total: int) -> None:
-        st.session_state["games_completed"] = done
-        st.session_state["progress"] = done / total if total else 0.0
-
-    return run_round_robin(
-        agents=agents,
-        variant=config["variant"],
-        depth=config["depth"],
-        max_moves=config["max_moves"],
-        seed=config["seed"],
-        workers=config["workers"],
-        on_game_complete=on_game_complete,
-    )
-
-
-def _write_markdown_report(
-    config: dict,
-    leaderboard: list,
-    marginals: list,
-    synergies: list,
-    interpretation: str,
-    generate_markdown_report: object,
-    pathlib: object,
-) -> str:
-    """Write the markdown report to disk and return its contents."""
-    out_dir = pathlib.Path("outputs")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    report_path = str(
-        out_dir / f"reports/{config['variant']}_strategy_report.md"
-    )
-    pathlib.Path(report_path).parent.mkdir(parents=True, exist_ok=True)
-    generate_markdown_report(
-        variant=config["variant"],
-        feature_names=config["selected_features"],
-        leaderboard=leaderboard,
-        marginals=marginals,
-        synergies=synergies,
-        interpretation=interpretation,
-        output_path=report_path,
-        config=config,
-    )
-    with open(report_path) as f:
-        return f.read()
-
-
 # ---------------------------------------------------------------------------
-# Sidebar helpers
+# Phase 1 — Configure
 # ---------------------------------------------------------------------------
 
-def _render_variant_selector() -> None:
-    """Render variant radio buttons and description caption."""
-    st.subheader("Chess Variant")
-    variant = st.radio(
-        "variant_radio",
-        options=["standard", "atomic", "antichess"],
-        format_func=lambda v: v.title(),
-        index=["standard", "atomic", "antichess"].index(
-            st.session_state["variant"]
-        ),
-        label_visibility="collapsed",
-    )
-    st.session_state["variant"] = variant
-    st.caption(VARIANT_DESCRIPTIONS[variant])
+def _render_setup() -> None:
+    st.title("EngineLab")
+    st.caption("Feature-subset strategy discovery for chess variants")
+    st.divider()
 
+    # Variant cards
+    st.subheader("Select Variant")
+    cols = st.columns(3)
+    variants = ["standard", "atomic", "antichess"]
+    for col, v in zip(cols, variants):
+        selected = st.session_state["variant"] == v
+        border = f"2px solid {COLOR_POSITIVE}" if selected else "2px solid #30363d"
+        col.markdown(
+            f"""<div style="border:{border};border-radius:8px;padding:12px 16px;
+            cursor:pointer;background:#161b22">
+            <div style="font-size:1rem;font-weight:600;color:#e6edf3">{v.title()}</div>
+            <div style="font-size:0.8rem;color:#8b949e;margin-top:4px">
+            {VARIANT_DESCRIPTIONS[v]}</div></div>""",
+            unsafe_allow_html=True,
+        )
+        if col.button("Select", key=f"variant_{v}", use_container_width=True):
+            st.session_state["variant"] = v
+            st.rerun()
 
-def _render_feature_checkboxes() -> int:
-    """Render feature checkboxes and Select All button. Returns selected count."""
-    col1, col2 = st.columns([3, 1])
-    col1.subheader("Features")
-    if col2.button("All", key="select_all", use_container_width=True):
+    st.divider()
+
+    # Feature selection
+    st.subheader("Select Features")
+    preset_cols = st.columns(len(PRESETS) + 2)
+    for i, preset in enumerate(PRESETS):
+        if preset_cols[i].button(preset["label"], help=preset["desc"], use_container_width=True):
+            st.session_state["selected_features"] = list(preset["features"])
+            st.rerun()
+    if preset_cols[len(PRESETS)].button("All", use_container_width=True):
         st.session_state["selected_features"] = list(ALL_FEATURES)
         st.rerun()
+    if preset_cols[len(PRESETS) + 1].button("Clear", use_container_width=True):
+        st.session_state["selected_features"] = []
+        st.rerun()
 
+    feat_cols = st.columns(5)
     selected: list[str] = []
-    for feat in ALL_FEATURES:
+    for i, feat in enumerate(ALL_FEATURES):
         checked = feat in st.session_state["selected_features"]
-        if st.checkbox(FEATURE_DISPLAY_NAMES[feat], value=checked, key=f"feat_{feat}"):
+        if feat_cols[i % 5].checkbox(
+            FEATURE_DISPLAY_NAMES[feat], value=checked, key=f"feat_{feat}"
+        ):
             selected.append(feat)
     st.session_state["selected_features"] = selected
-    return len(selected)
 
-
-def _render_estimates(n_feat: int) -> None:
-    """Render agent/game estimates and warnings."""
-    n_agents = _estimate_agents(n_feat)
-    n_games = _estimate_games(n_agents)
-    st.caption(f"Est. agents: **{n_agents}**  ·  Est. games: **{n_games:,}**")
+    n = len(selected)
+    n_agents = min(2 ** n - 1, 100) if n >= 1 else 0
+    n_games = n_agents * (n_agents - 1)
+    st.caption(f"Est. **{n_agents}** agents · **{n_games:,}** games")
     if n_games > 9000:
-        st.warning("Long runtime — reduce features or increase workers.")
+        st.warning("Long runtime — consider reducing features or using the Debug preset.")
 
+    st.divider()
 
-def _render_sliders() -> None:
-    """Render depth, max_moves, workers, and seed inputs."""
-    st.session_state["depth"] = st.slider(
-        "Search Depth", 1, 3, st.session_state["depth"]
-    )
-    st.caption("Depth 1: fast. Depth 2: standard. Depth 3: slow.")
-    st.session_state["max_moves"] = st.slider(
-        "Max Moves", 20, 150, st.session_state["max_moves"], step=10
-    )
-    st.session_state["workers"] = st.slider(
-        "Parallel Workers", 1, 8, st.session_state["workers"]
-    )
-    st.session_state["seed"] = st.number_input(
-        "Random Seed", 0, 999999, st.session_state["seed"]
-    )
+    # Config row
+    st.subheader("Configuration")
+    c1, c2, c3, c4 = st.columns(4)
+    st.session_state["depth"] = c1.slider("Search Depth", 1, 3, st.session_state["depth"])
+    st.session_state["max_moves"] = c2.slider("Max Moves", 20, 150, st.session_state["max_moves"], step=10)
+    st.session_state["workers"] = c3.slider("Workers", 1, 8, st.session_state["workers"])
+    st.session_state["seed"] = c4.number_input("Seed", 0, 999999, st.session_state["seed"])
 
+    st.divider()
 
-def _render_run_button(n_feat: int) -> None:
-    """Render Run Tournament button and progress bar while running."""
-    is_running = st.session_state.get("running", False)
-    can_run = n_feat >= 2 and not is_running
+    can_run = n >= 2
+    if not can_run:
+        st.warning("Select at least 2 features to run.")
 
-    if n_feat < 2:
-        st.warning("Select at least 2 features.")
-
-    if st.button(
+    col_run, col_mock = st.columns([3, 1])
+    if col_run.button(
         "▶ Run Tournament",
         type="primary",
         use_container_width=True,
@@ -250,12 +224,13 @@ def _render_run_button(n_feat: int) -> None:
     ):
         _start_tournament()
 
-    if is_running:
-        _render_progress()
+    if col_mock.button("Load Mock Data", use_container_width=True, help="Load fake data for UI testing"):
+        from ui.mock_data import generate_mock_session_state
+        st.session_state.update(generate_mock_session_state())
+        st.rerun()
 
 
 def _start_tournament() -> None:
-    """Snapshot config, clear results, launch background thread."""
     config = {
         "variant": st.session_state["variant"],
         "selected_features": list(st.session_state["selected_features"]),
@@ -264,140 +239,340 @@ def _start_tournament() -> None:
         "workers": st.session_state["workers"],
         "seed": st.session_state["seed"],
     }
-    for k in [
-        "results", "agents", "leaderboard", "marginals", "synergies",
-        "interpretation", "report_md", "config_snapshot",
-        "duration_seconds", "error",
-    ]:
+    for k in ["results", "agents", "leaderboard", "marginals", "synergies",
+              "interpretation", "report_md", "config_snapshot", "duration_seconds", "error"]:
         st.session_state[k] = None
-
-    st.session_state["running"] = True
-    st.session_state["games_completed"] = 0
-    st.session_state["progress"] = 0.0
-
-    t = threading.Thread(
-        target=_run_tournament_thread,
-        args=(config,),
-        daemon=True,
-    )
-    t.start()
+    st.session_state.update(running=True, games_completed=0, progress=0.0)
+    threading.Thread(target=_run_tournament, args=(config,), daemon=True).start()
     st.rerun()
 
 
-def _render_progress() -> None:
-    """Render progress bar and elapsed time caption."""
+# ---------------------------------------------------------------------------
+# Phase 2 — Live
+# ---------------------------------------------------------------------------
+
+def _render_live() -> None:
+    snap = st.session_state.get("config_snapshot") or {}
+    variant = snap.get("variant", st.session_state["variant"])
+    n_agents = len(st.session_state.get("agents") or [])
+    total = st.session_state.get("total_games", 0)
     done = st.session_state.get("games_completed", 0)
-    total = st.session_state.get("total_games", 1)
-    st.progress(st.session_state.get("progress", 0.0))
-    elapsed = time.time() - (
-        st.session_state.get("start_time") or time.time()
+    progress = st.session_state.get("progress", 0.0)
+    elapsed = time.time() - (st.session_state.get("start_time") or time.time())
+    remaining = (elapsed / progress - elapsed) if progress > 0.01 else 0.0
+
+    st.title("Tournament Running")
+    st.caption(f"{variant.title()} · {n_agents} agents · {total:,} games")
+    st.progress(progress)
+    st.caption(
+        f"Game **{done}** / **{total}**  ·  "
+        f"Elapsed: **{elapsed:.0f}s**  ·  "
+        f"Est. remaining: **{remaining:.0f}s**"
     )
-    st.caption(f"Game {done} / {total}  ·  {elapsed:.0f}s elapsed")
+    st.divider()
+
+    left, right = st.columns([3, 2])
+
+    with left:
+        st.subheader("Live Leaderboard")
+        lb = st.session_state.get("leaderboard")
+        if lb:
+            rows = [
+                {
+                    "Agent": r.agent_name.replace("Agent_", "")[:45],
+                    "Score Rate": round(r.score_rate, 4),
+                    "W": r.wins,
+                    "D": r.draws,
+                    "L": r.losses,
+                    "Games": r.games_played,
+                }
+                for r in lb[:15]
+            ]
+            st.dataframe(
+                pd.DataFrame(rows),
+                use_container_width=True,
+                height=380,
+                column_config={"Score Rate": st.column_config.NumberColumn(format="%.4f")},
+            )
+            st.plotly_chart(_build_ranking_chart(lb), use_container_width=True)
+        else:
+            st.info("Waiting for first results...")
+
+    with right:
+        st.subheader("Stats")
+        results = st.session_state.get("results") or []
+        if results:
+            avg_len = sum(r.moves for r in results) / len(results)
+            draws = sum(1 for r in results if r.winner is None)
+            st.metric("Games complete", done)
+            st.metric("Avg game length", f"{avg_len:.1f} plies")
+            st.metric("Draw rate", f"{draws / len(results):.1%}")
+        else:
+            st.metric("Games complete", done)
+            st.caption("Stats will appear as games complete.")
+
+    # Auto-refresh every 2s while running
+    time.sleep(2)
+    st.rerun()
 
 
-def _render_load_results() -> None:
-    """Render the Load Results section with JSON file uploader."""
-    st.subheader("Load Results")
-    uploaded = st.file_uploader("Upload tournament JSON", type=["json"])
-    if uploaded:
-        _handle_upload(uploaded)
-
-
-def _handle_upload(uploaded: object) -> None:
-    """Parse an uploaded JSON file and populate session state."""
-    try:
-        results, agents = _load_results_from_upload(uploaded)
-        _run_analysis_pipeline(results, agents)
-        st.success("Results loaded.")
-    except Exception as e:
-        st.error(f"Failed to load: {e}")
-
-
-def _load_results_from_upload(uploaded: object) -> tuple:
-    """Deserialise an uploaded JSON into (results, agents)."""
-    import json
-    import tempfile
-    import pathlib
-
-    from tournament.results_io import load_results_json
-    from agents.feature_subset_agent import FeatureSubsetAgent
-
-    data = json.loads(uploaded.read())
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        json.dump(data, f)
-        tmp_path = f.name
-
-    results = load_results_json(tmp_path)
-    pathlib.Path(tmp_path).unlink(missing_ok=True)
-
-    all_agent_names = list(
-        {r.white_agent for r in results} | {r.black_agent for r in results}
+def _build_ranking_chart(lb: list) -> go.Figure:
+    top5 = lb[:5]
+    fig = go.Figure()
+    colors = [COLOR_POSITIVE, "#00b0ff", "#ff9800", "#e040fb", COLOR_NEUTRAL]
+    for row, color in zip(top5, colors):
+        name = row.agent_name.replace("Agent_", "")[:30]
+        fig.add_trace(go.Scatter(
+            x=[0, row.games_played],
+            y=[0.5, row.score_rate],
+            mode="lines",
+            name=name,
+            line=dict(color=color, width=2),
+        ))
+    fig.update_layout(
+        title="Ranking Evolution (top 5)",
+        xaxis_title="Games played",
+        yaxis_title="Score rate",
+        yaxis=dict(range=[0, 1]),
+        height=260,
+        margin=dict(l=0, r=0, t=36, b=0),
+        paper_bgcolor="#161b22",
+        plot_bgcolor="#0e1117",
+        font=dict(color="#e6edf3"),
+        legend=dict(font=dict(size=10)),
     )
-    agents = [
-        FeatureSubsetAgent(name=n, features=tuple(), weights={})
-        for n in all_agent_names
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — Results
+# ---------------------------------------------------------------------------
+
+def _render_results() -> None:
+    lb = st.session_state["leaderboard"]
+    marginals = st.session_state["marginals"]
+    synergies = st.session_state["synergies"]
+    interpretation = st.session_state.get("interpretation", "")
+    report_md = st.session_state.get("report_md", "")
+    snap = st.session_state.get("config_snapshot") or {}
+    duration = st.session_state.get("duration_seconds")
+
+    st.success("Tournament complete!")
+
+    # Summary metrics
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Variant", snap.get("variant", "—").title())
+    c2.metric("Agents", len(st.session_state.get("agents") or []))
+    c3.metric("Games", len(st.session_state.get("results") or []))
+    c4.metric("Duration", f"{duration:.0f}s" if duration else "—")
+
+    # Best agent
+    if lb:
+        best = lb[0]
+        st.info(
+            f"**Best agent:** `{best.agent_name.replace('Agent_', '')}`  ·  "
+            f"Score rate: **{best.score_rate:.4f}**  ·  "
+            f"W {best.wins} / D {best.draws} / L {best.losses}"
+        )
+
+    st.divider()
+
+    # Results sections
+    _render_leaderboard_section(lb)
+    st.divider()
+    _render_features_section(marginals, snap.get("selected_features", ALL_FEATURES))
+    st.divider()
+    _render_synergy_section(synergies, snap.get("selected_features", ALL_FEATURES))
+    st.divider()
+    _render_interpretation_section(interpretation)
+    st.divider()
+    _render_download_section(report_md)
+
+    st.divider()
+    if st.button("↺ Run Again", use_container_width=False):
+        for k in ["results", "agents", "leaderboard", "marginals", "synergies",
+                  "interpretation", "report_md", "config_snapshot", "duration_seconds", "error"]:
+            st.session_state[k] = None
+        st.rerun()
+
+
+def _render_leaderboard_section(lb: list) -> None:
+    st.subheader("Leaderboard")
+    rows = [
+        {
+            "Rank": i + 1,
+            "Agent": r.agent_name.replace("Agent_", "")[:50],
+            "Features": len(r.features),
+            "Score Rate": round(r.score_rate, 4),
+            "W": r.wins,
+            "D": r.draws,
+            "L": r.losses,
+            "Avg Length": round(r.avg_game_length, 1),
+        }
+        for i, r in enumerate(lb)
     ]
-    return results, agents
-
-
-def _run_analysis_pipeline(results: list, agents: list) -> None:
-    """Run leaderboard, marginals, synergies, interpretation and store results."""
-    from tournament.leaderboard import compute_leaderboard
-    from analysis.feature_marginals import compute_feature_marginals
-    from analysis.synergy import compute_pairwise_synergies
-    from analysis.interpretation import generate_interpretation
-
-    leaderboard = compute_leaderboard(results, agents)
-    features_used = list(
-        {f for a in agents for f in a.features} or ALL_FEATURES
+    st.dataframe(
+        pd.DataFrame(rows),
+        use_container_width=True,
+        height=400,
+        column_config={"Score Rate": st.column_config.NumberColumn(format="%.4f")},
     )
-    marginals = compute_feature_marginals(
-        leaderboard, features_used or ALL_FEATURES
+
+    # Score vs feature count scatter
+    fig = go.Figure()
+    xs = [len(r.features) for r in lb]
+    ys = [r.score_rate for r in lb]
+    names = [r.agent_name.replace("Agent_", "") for r in lb]
+    fig.add_trace(go.Scatter(
+        x=xs, y=ys, mode="markers", text=names,
+        marker=dict(color=ys, colorscale="RdYlGn", size=8, showscale=True,
+                    colorbar=dict(title="Score Rate")),
+        hovertemplate="%{text}<br>Features: %{x}<br>Score: %{y:.4f}<extra></extra>",
+    ))
+    import numpy as np
+    if len(xs) > 1:
+        m, b = np.polyfit(xs, ys, 1)
+        x_range = list(range(min(xs), max(xs) + 1))
+        fig.add_trace(go.Scatter(
+            x=x_range, y=[m * x + b for x in x_range],
+            mode="lines", name="trend", line=dict(color=COLOR_NEUTRAL, dash="dash"),
+        ))
+    fig.update_layout(
+        title="Does adding more features help?",
+        xaxis_title="Number of features", yaxis_title="Score rate",
+        height=300, margin=dict(l=0, r=0, t=36, b=0),
+        paper_bgcolor="#161b22", plot_bgcolor="#0e1117", font=dict(color="#e6edf3"),
+        showlegend=False,
     )
-    synergies = compute_pairwise_synergies(
-        leaderboard, features_used or ALL_FEATURES
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _render_features_section(marginals: list, feature_names: list[str]) -> None:
+    st.subheader("Feature Intelligence")
+    st.caption("How much does each feature improve win rate when present?")
+
+    sorted_m = sorted(marginals, key=lambda r: r.marginal, reverse=True)
+    labels = [FEATURE_DISPLAY_NAMES.get(r.feature, r.feature) for r in sorted_m]
+    values = [r.marginal for r in sorted_m]
+    colors = [COLOR_POSITIVE if v > 0.01 else COLOR_NEGATIVE if v < -0.01 else COLOR_NEUTRAL for v in values]
+
+    fig = go.Figure(go.Bar(
+        x=values, y=labels, orientation="h",
+        marker_color=colors,
+        hovertemplate="%{y}: %{x:+.4f}<extra></extra>",
+    ))
+    fig.update_layout(
+        xaxis_title="Marginal contribution to win rate",
+        height=max(300, len(labels) * 36),
+        margin=dict(l=0, r=0, t=0, b=0),
+        paper_bgcolor="#161b22", plot_bgcolor="#0e1117", font=dict(color="#e6edf3"),
+        yaxis=dict(autorange="reversed"),
     )
-    interpretation = generate_interpretation(
-        leaderboard[0] if leaderboard else None,
-        marginals,
-        synergies,
-        "standard",
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Detailed table
+    rows = [
+        {
+            "Feature": FEATURE_DISPLAY_NAMES.get(r.feature, r.feature),
+            "Marginal": round(r.marginal, 4),
+            "Avg With": round(r.avg_score_with, 4),
+            "Avg Without": round(r.avg_score_without, 4),
+            "Top-10 Freq": f"{r.top_k_frequency:.0%}",
+        }
+        for r in sorted_m
+    ]
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+def _render_synergy_section(synergies: list, feature_names: list[str]) -> None:
+    st.subheader("Feature Synergy")
+    st.caption(
+        "synergy(A, B) = avg_with_both − avg_with_A − avg_with_B + overall_avg. "
+        "Positive = features more valuable together than separately."
     )
-    st.session_state.update({
-        "results": results,
-        "agents": agents,
-        "leaderboard": leaderboard,
-        "marginals": marginals,
-        "synergies": synergies,
-        "interpretation": interpretation,
-    })
+
+    n = len(feature_names)
+    names = [FEATURE_DISPLAY_NAMES.get(f, f) for f in feature_names]
+    matrix: list[list[float | None]] = [[None] * n for _ in range(n)]
+    idx = {f: i for i, f in enumerate(feature_names)}
+
+    for row in synergies:
+        i, j = idx.get(row.feature_a), idx.get(row.feature_b)
+        if i is not None and j is not None:
+            matrix[i][j] = round(row.synergy, 4)
+            matrix[j][i] = round(row.synergy, 4)
+
+    fig = go.Figure(go.Heatmap(
+        z=matrix, x=names, y=names,
+        colorscale="RdYlGn", zmid=0,
+        text=[[f"{v:.3f}" if v is not None else "" for v in row] for row in matrix],
+        texttemplate="%{text}",
+        hovertemplate="%{y} + %{x}<br>Synergy: %{z:.4f}<extra></extra>",
+    ))
+    fig.update_layout(
+        height=max(420, n * 48),
+        margin=dict(l=0, r=0, t=0, b=0),
+        paper_bgcolor="#161b22", plot_bgcolor="#0e1117", font=dict(color="#e6edf3"),
+        xaxis=dict(tickangle=45),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Top/bottom pairs bar
+    sorted_s = sorted(synergies, key=lambda r: r.synergy, reverse=True)
+    top = sorted_s[:5]
+    bottom = sorted_s[-5:]
+    pairs = top + bottom
+    pair_labels = [
+        f"{FEATURE_DISPLAY_NAMES.get(r.feature_a, r.feature_a)} + "
+        f"{FEATURE_DISPLAY_NAMES.get(r.feature_b, r.feature_b)}"
+        for r in pairs
+    ]
+    pair_values = [r.synergy for r in pairs]
+    pair_colors = [COLOR_POSITIVE if v >= 0 else COLOR_NEGATIVE for v in pair_values]
+    fig2 = go.Figure(go.Bar(
+        x=pair_values, y=pair_labels, orientation="h",
+        marker_color=pair_colors,
+        hovertemplate="%{y}: %{x:+.4f}<extra></extra>",
+    ))
+    fig2.update_layout(
+        title="Most synergistic and redundant pairs",
+        height=360, margin=dict(l=0, r=0, t=36, b=0),
+        paper_bgcolor="#161b22", plot_bgcolor="#0e1117", font=dict(color="#e6edf3"),
+        yaxis=dict(autorange="reversed"),
+    )
+    st.plotly_chart(fig2, use_container_width=True)
 
 
-# ---------------------------------------------------------------------------
-# Sidebar — public entry point
-# ---------------------------------------------------------------------------
+def _render_interpretation_section(interpretation: str) -> None:
+    st.subheader("Interpretation")
+    if interpretation:
+        st.markdown(f"> {interpretation}")
+    else:
+        st.caption("No interpretation available.")
 
-def render_sidebar() -> None:
-    """Render the full persistent sidebar."""
-    with st.sidebar:
-        st.title("EngineLab")
-        st.caption("Interpretable Strategy Discovery")
-        st.divider()
 
-        _render_variant_selector()
-        st.divider()
-
-        n_feat = _render_feature_checkboxes()
-        _render_estimates(n_feat)
-        st.divider()
-
-        _render_sliders()
-        st.divider()
-
-        _render_run_button(n_feat)
-        st.divider()
-
-        _render_load_results()
+def _render_download_section(report_md: str) -> None:
+    st.subheader("Export")
+    col1, col2 = st.columns(2)
+    snap = st.session_state.get("config_snapshot") or {}
+    variant = snap.get("variant", "results")
+    col1.download_button(
+        "⬇ Download Report (Markdown)",
+        data=report_md or "",
+        file_name=f"{variant}_strategy_report.md",
+        mime="text/markdown",
+        use_container_width=True,
+    )
+    results = st.session_state.get("results") or []
+    if results:
+        import json, dataclasses
+        col2.download_button(
+            "⬇ Download Results (JSON)",
+            data=json.dumps([dataclasses.asdict(r) for r in results], indent=2),
+            file_name=f"{variant}_results.json",
+            mime="application/json",
+            use_container_width=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -405,19 +580,25 @@ def render_sidebar() -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    """Streamlit entry point."""
     _init_session_state()
-    render_sidebar()
 
     if st.session_state.get("error"):
         st.error(st.session_state["error"])
+        if st.button("Clear error and reset"):
+            st.session_state["error"] = None
+            st.session_state["running"] = False
+            st.rerun()
+        return
 
-    st.title("EngineLab")
-    st.caption("Feature-Subset Strategy Discovery for Chess Variants")
-    st.info(
-        "Use the sidebar to configure and run a tournament, "
-        "or navigate to a page using the left menu."
-    )
+    try:
+        if st.session_state.get("running"):
+            _render_live()
+        elif st.session_state.get("leaderboard") is not None:
+            _render_results()
+        else:
+            _render_setup()
+    except Exception as exc:
+        st.error(str(exc))
 
 
 if __name__ == "__main__":

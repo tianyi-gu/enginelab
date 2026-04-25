@@ -43,7 +43,7 @@ SESSION_DEFAULTS: dict = {
     "variant": "standard",
     "selected_features": list(ALL_FEATURES),
     "depth": 2,
-    "view": "build",
+    "view": "home",
     "running": False,
     "progress": 0.0,
     "games_completed": 0,
@@ -66,5 +66,8 @@ SESSION_DEFAULTS: dict = {
     "play_fen": chess.STARTING_FEN,
     "play_moves": [],
     "play_status": "ongoing",
+    "play_winner": None,
+    "play_last_move": None,
+    "play_exploded_squares": None,
     "play_flipped": False,
 }

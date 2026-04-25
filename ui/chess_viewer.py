@@ -1,10 +1,10 @@
 """
 Chess board rendering utilities for the EngineLab Streamlit UI.
 
-Three public functions:
-  chess_game_viewer      — interactive game replay (chessboard.js + chess.js)
-  chess_play_interactive — drag-and-drop game vs random engine (self-contained HTML)
-  chess_play_board       — static SVG position viewer (python-chess)
+Public functions:
+  chess_game_viewer — interactive game replay (chessboard.js, server-side FEN)
+  chess_play_dnd   — drag-and-drop play board (chessboard.js, server-side logic)
+  chess_play_board — static SVG position viewer (python-chess)
 """
 from __future__ import annotations
 
@@ -31,8 +31,6 @@ _VIEWER_TEMPLATE = r"""<!DOCTYPE html>
        href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css"
        crossorigin="anonymous">
 <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"
-        crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"
         crossorigin="anonymous"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -168,20 +166,15 @@ var UCI_MOVES  = __UCI_MOVES__;
 var WHITE_NAME = "__WHITE_NAME__";
 var BLACK_NAME = "__BLACK_NAME__";
 var RESULT     = "__RESULT__";
+var FENS       = __FENS__;       // Pre-computed by Python (variant-aware)
+var SAN_MOVES  = __SAN_MOVES__;  // Pre-computed by Python
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 document.getElementById('white-name').textContent = WHITE_NAME;
 document.getElementById('black-name').textContent = BLACK_NAME;
 
-var game = new Chess();
-var fens     = [game.fen()];
-var sanMoves = [];
-
-UCI_MOVES.forEach(function(uci) {
-  var mv = game.move({ from: uci.slice(0,2), to: uci.slice(2,4),
-                       promotion: uci[4] || 'q' });
-  if (mv) { sanMoves.push(mv.san); fens.push(game.fen()); }
-});
+var fens     = FENS;
+var sanMoves = SAN_MOVES;
 
 var cursor = 0;
 
@@ -266,8 +259,12 @@ def chess_game_viewer(
     result: str = "",
     board_size: int = 380,
     height: int = 560,
+    variant: str = "standard",
 ) -> None:
     """Render an interactive chess game replay viewer inside a Streamlit app.
+
+    Pre-computes FEN positions using the real variant engine so that
+    atomic explosions, antichess captures, etc. are displayed correctly.
 
     Args:
         moves:       List of UCI move strings, e.g. ["e2e4", "e7e5", ...].
@@ -276,13 +273,18 @@ def chess_game_viewer(
         result:      Short result string shown at the end of the move list, e.g. "1-0".
         board_size:  Unused (board is now responsive); kept for API compatibility.
         height:      Component iframe height in pixels.
+        variant:     Chess variant for correct move application.
     """
+    fens, san_moves = _precompute_replay_positions(moves, variant)
+
     def _esc(s: str) -> str:
         return s.replace("\\", "\\\\").replace('"', '\\"')
 
     html = (
         _VIEWER_TEMPLATE
         .replace("__UCI_MOVES__",   json.dumps(moves))
+        .replace("__FENS__",        json.dumps(fens))
+        .replace("__SAN_MOVES__",   json.dumps(san_moves))
         .replace("__WHITE_NAME__",  _esc(white_name))
         .replace("__BLACK_NAME__",  _esc(black_name))
         .replace("__RESULT__",      _esc(result))
@@ -291,261 +293,317 @@ def chess_game_viewer(
     components.html(html, height=height, scrolling=False)
 
 
+def _precompute_replay_positions(
+    uci_moves: list[str], variant: str,
+) -> tuple[list[str], list[str]]:
+    """Compute FEN positions and SAN labels for each move using the real engine.
+
+    Returns (fens, san_labels) where fens[0] is the starting position and
+    fens[i+1] is the position after uci_moves[i].
+    """
+    from core.board import Board
+    from core.move import Move
+    from core.coordinates import algebraic_to_square
+    from variants.base import get_apply_move, get_generate_legal_moves
+
+    board = Board.starting_position()
+    apply_fn = get_apply_move(variant)
+    gen_legal_fn = get_generate_legal_moves(variant)
+
+    fens = [board.to_fen()]
+    san_labels = []
+
+    for uci in uci_moves:
+        # Parse UCI
+        start = algebraic_to_square(uci[0:2])
+        end = algebraic_to_square(uci[2:4])
+        promo = None
+        if len(uci) > 4:
+            promo = uci[4].upper() if board.side_to_move == "w" else uci[4].lower()
+        candidate = Move(start=start, end=end, promotion=promo)
+
+        # Find matching legal move
+        legal = gen_legal_fn(board)
+        matched = None
+        for m in legal:
+            if m.start == candidate.start and m.end == candidate.end:
+                if candidate.promotion is None or m.promotion == candidate.promotion:
+                    matched = m
+                    break
+
+        if matched is None:
+            # Move not legal in this variant — stop replay here
+            break
+
+        # Build a simple SAN-like label: piece + target (good enough for display)
+        san = _build_move_label(board, matched, uci)
+        san_labels.append(san)
+
+        board = apply_fn(board, matched)
+        fens.append(board.to_fen())
+
+        if board.is_terminal():
+            break
+
+    return fens, san_labels
+
+
+def _build_move_label(board, move, uci: str) -> str:
+    """Build a human-readable move label from a Move object.
+
+    Not full SAN, but good enough for the replay move list.
+    """
+    from core.coordinates import square_to_algebraic
+
+    piece = board.get_piece(move.start)
+    target_sq = square_to_algebraic(move.end[0], move.end[1])
+    is_capture = board.get_piece(move.end) is not None
+
+    if piece and piece.upper() == "K":
+        # Detect castling
+        if abs(move.start[1] - move.end[1]) == 2:
+            return "O-O" if move.end[1] > move.start[1] else "O-O-O"
+
+    piece_letter = ""
+    if piece and piece.upper() != "P":
+        piece_letter = piece.upper()
+
+    source_file = chr(ord("a") + move.start[1])
+    cap = "x" if is_capture else ""
+
+    # For pawn captures, include source file
+    if not piece_letter and is_capture:
+        piece_letter = source_file
+        label = f"{piece_letter}{cap}{target_sq}"
+    else:
+        label = f"{piece_letter}{cap}{target_sq}"
+
+    if move.promotion:
+        label += f"={move.promotion.upper()}"
+
+    return label
+
+
 # ---------------------------------------------------------------------------
-# Interactive play (drag-and-drop vs random engine)
+# Drag-and-drop play board (components.html + query param communication)
 # ---------------------------------------------------------------------------
 
-_PLAY_TEMPLATE = r"""<!DOCTYPE html>
+_DND_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <script src="https://code.jquery.com/jquery-3.7.1.min.js" crossorigin="anonymous"></script>
-<link  rel="stylesheet"
-       href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css"
-       crossorigin="anonymous">
+<link rel="stylesheet"
+      href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css"
+      crossorigin="anonymous">
 <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"
         crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"
-        crossorigin="anonymous"></script>
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: #161512; color: #bababa; font-family: 'Inter', system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 6px 4px 8px; }
-.player-row { display: flex; align-items: center; gap: 7px; padding: 5px 0; font-size: 12.5px; font-weight: 600; color: #d0cfc8; width: 460px; }
-.dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
-.dot-black { background: #1a1a1a; border: 1px solid #555; }
-.dot-white { background: #f0d9b5; border: 1px solid #aaa; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #161512;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 4px 0 0;
+}
 #board { width: 460px; }
 .board-b72b1 { border: 2px solid #2c2b29 !important; border-radius: 2px; }
-.status-row { display: flex; align-items: center; justify-content: space-between; width: 460px; padding: 5px 0 3px; }
-#status { font-size: 13px; font-weight: 600; }
-.your-turn { color: #629924 !important; }
-.thinking { color: #7a7775 !important; font-style: italic; }
-.check { color: #e67e22 !important; }
-.checkmate { color: #c84b4b !important; }
-.draw { color: #7a7775 !important; }
-.movelist { background: #1f1e1c; border: 1px solid #3a3a38; border-radius: 5px; padding: 6px 9px; overflow-y: auto; max-height: 90px; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.85; width: 460px; }
-.mp { display: flex; gap: 2px; align-items: baseline; }
-.mn { color: #6a7068; min-width: 20px; font-size: 11px; }
-.mw, .mb { padding: 0 4px; border-radius: 2px; color: #c9d1d9; cursor: default; }
-.cur { background: #629924 !important; color: #fff !important; font-weight: 700; }
-.btn-new { margin-top: 6px; width: 460px; padding: 7px 0; border-radius: 4px; border: none; background: #629924; color: #fff; font-weight: 600; font-size: 13px; cursor: pointer; font-family: inherit; }
-.btn-new:hover { background: #4e7a1b; }
-#promo-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 999; justify-content: center; align-items: center; }
-#promo-modal.show { display: flex; }
-.promo-opts { background: #272522; border: 1px solid #3a3a38; border-radius: 8px; padding: 16px 20px; display: flex; gap: 10px; }
-.promo-btn { width: 56px; height: 56px; background: #1f1e1c; border: 1px solid #3a3a38; border-radius: 5px; cursor: pointer; font-size: 32px; display: flex; align-items: center; justify-content: center; }
-.promo-btn:hover { background: #3a3a38; }
+
+/* Legal move dots */
+.highlight-legal {
+  background: radial-gradient(circle, rgba(98,153,36,0.45) 24%, transparent 25%) !important;
+}
+.highlight-capture {
+  background: radial-gradient(circle, transparent 50%, rgba(98,153,36,0.45) 51%) !important;
+}
+/* Last move highlight */
+.highlight-lastmove {
+  background-color: rgba(155, 199, 0, 0.35) !important;
+}
+/* Atomic explosion highlight */
+.highlight-explosion {
+  background-color: rgba(255, 107, 53, 0.45) !important;
+}
+
+/* Promotion modal */
+#promo-modal {
+  display:none; position:fixed; inset:0;
+  background:rgba(0,0,0,0.7); z-index:999;
+  justify-content:center; align-items:center;
+}
+#promo-modal.show { display:flex; }
+.promo-opts {
+  background:#272522; border:1px solid #3a3a38;
+  border-radius:8px; padding:16px 20px; display:flex; gap:10px;
+}
+.promo-btn {
+  width:56px; height:56px; background:#1f1e1c;
+  border:1px solid #3a3a38; border-radius:5px;
+  cursor:pointer; font-size:32px;
+  display:flex; align-items:center; justify-content:center; color:#d0cfc8;
+}
+.promo-btn:hover { background:#3a3a38; }
 </style>
 </head>
 <body>
 
-<!-- Promotion modal -->
 <div id="promo-modal">
   <div class="promo-opts">
-    <button class="promo-btn" onclick="doPromotion('q')" title="Queen">&#9819;</button>
-    <button class="promo-btn" onclick="doPromotion('r')" title="Rook">&#9820;</button>
-    <button class="promo-btn" onclick="doPromotion('b')" title="Bishop">&#9821;</button>
-    <button class="promo-btn" onclick="doPromotion('n')" title="Knight">&#9822;</button>
+    <button class="promo-btn" onclick="doPromotion('q')">&#9819;</button>
+    <button class="promo-btn" onclick="doPromotion('r')">&#9820;</button>
+    <button class="promo-btn" onclick="doPromotion('b')">&#9821;</button>
+    <button class="promo-btn" onclick="doPromotion('n')">&#9822;</button>
   </div>
-</div>
-
-<div class="player-row">
-  <span class="dot dot-black"></span>
-  <span id="engine-name-top">__ENGINE_NAME__</span>
 </div>
 
 <div id="board"></div>
 
-<div class="player-row">
-  <span class="dot dot-white"></span>
-  <span>You (White)</span>
-</div>
-
-<div class="status-row">
-  <div id="status" class="your-turn">Your turn</div>
-</div>
-
-<div class="movelist" id="movelist">
-  <span style="color:#6a7068;font-size:11px">No moves yet</span>
-</div>
-
-<button class="btn-new" onclick="newGame()">New Game</button>
-
 <script>
-var game = new Chess();
+var LEGAL_MOVES = __LEGAL_MOVES__;
+var GAME_STATUS = "__STATUS__";
+var LAST_MOVE_SQUARES = __LAST_MOVE_SQUARES__;
+var EXPLODED_SQUARES = __EXPLODED_SQUARES__;
 var pendingPromotion = null;
 
-var board = Chessboard('board', {
-  draggable: true,
-  position: 'start',
-  pieceTheme: '__PIECE_THEME__',
-  boardWidth: 460,
-  onDragStart: onDragStart,
-  onDrop: onDrop,
-  onSnapEnd: function() { board.position(game.fen()); },
+// Build lookup: source -> [target, ...]
+var legalTargets = {};
+LEGAL_MOVES.forEach(function(uci) {
+  var from = uci.substring(0,2), to = uci.substring(2,4);
+  if (!legalTargets[from]) legalTargets[from] = [];
+  legalTargets[from].push(to);
 });
 
-// ── Drag start guard ────────────────────────────────────────────────────────
+var dragging = false;
+
+var board = Chessboard('board', {
+  position: '__FEN__',
+  pieceTheme: '__PIECE_THEME__',
+  boardWidth: 460,
+  draggable: true,
+  dropOffBoard: 'snapback',
+  onDragStart: onDragStart,
+  onDrop: onDrop,
+  onSnapEnd: function() { board.position('__FEN__'); dragging = false; },
+  onMouseoverSquare: function(sq) { if (!dragging) onMouseover(sq); },
+  onMouseoutSquare: function() { if (!dragging) onMouseout(); },
+});
+
 function onDragStart(source, piece) {
-  if (game.game_over()) return false;
-  if (game.turn() !== 'w') return false;
+  if (GAME_STATUS !== 'ongoing') return false;
   if (piece.search(/^b/) !== -1) return false;
+  if (!legalTargets[source] || legalTargets[source].length === 0) return false;
+  dragging = true;
+  onMouseout();  // clear any hover highlights
+  // Show legal targets for the dragged piece
+  var pos = board.position();
+  (legalTargets[source] || []).forEach(function(t) {
+    var e = document.querySelector('.square-' + t);
+    if (e) e.classList.add(pos[t] ? 'highlight-capture' : 'highlight-legal');
+  });
 }
 
-// ── Drop handler ─────────────────────────────────────────────────────────────
 function onDrop(source, target) {
-  // Detect pawn promotion
-  var isPawnPromo = (
-    game.get(source) &&
-    game.get(source).type === 'p' &&
-    game.get(source).color === 'w' &&
-    target[1] === '8'
-  );
+  onMouseout();  // clear highlights
+  if (!legalTargets[source] || legalTargets[source].indexOf(target) === -1) {
+    return 'snapback';
+  }
 
-  if (isPawnPromo) {
-    // Check if the move is at least pseudo-legal before showing modal
-    var testMove = game.move({ from: source, to: target, promotion: 'q' });
-    if (testMove === null) return 'snapback';
-    game.undo();
+  // Detect pawn promotion
+  var piece = board.position()[source];
+  if (piece === 'wP' && target[1] === '8') {
     pendingPromotion = { from: source, to: target };
     document.getElementById('promo-modal').classList.add('show');
-    return;
+    return 'snapback';
   }
 
-  var move = game.move({ from: source, to: target, promotion: 'q' });
-  if (move === null) return 'snapback';
-
-  afterPlayerMove();
+  sendMove(source + target);
+  return 'trash';  // hide piece immediately; page will reload with new position
 }
 
-// ── Promotion modal callback ─────────────────────────────────────────────────
-function doPromotion(piece) {
+function doPromotion(p) {
   document.getElementById('promo-modal').classList.remove('show');
   if (!pendingPromotion) return;
-  var move = game.move({ from: pendingPromotion.from, to: pendingPromotion.to, promotion: piece });
+  sendMove(pendingPromotion.from + pendingPromotion.to + p);
   pendingPromotion = null;
-  board.position(game.fen());
-  if (move === null) return;
-  afterPlayerMove();
 }
 
-// ── After player moves ────────────────────────────────────────────────────────
-function afterPlayerMove() {
-  updateMoveList();
-  updateStatus();
-  if (!game.game_over()) {
-    setStatus('thinking', 'Thinking…');
-    var delay = 400 + Math.random() * 300;
-    setTimeout(engineMove, delay);
+function sendMove(uci) {
+  // Navigate parent to trigger Streamlit rerun with move in query params
+  try {
+    var url = new URL(window.parent.location.href);
+    url.searchParams.set('chess_move', uci);
+    window.parent.location.href = url.toString();
+  } catch(e) {
+    // Fallback: try setting on top-level
+    window.top.location.search = '?chess_move=' + uci;
   }
 }
 
-// ── Engine move (random legal move) ──────────────────────────────────────────
-function engineMove() {
-  if (game.game_over()) return;
-  var moves = game.moves();
-  if (moves.length === 0) return;
-  var chosen = moves[Math.floor(Math.random() * moves.length)];
-  game.move(chosen);
-  board.position(game.fen());
-  updateMoveList();
-  updateStatus();
+function onMouseover(square) {
+  if (GAME_STATUS !== 'ongoing') return;
+  var targets = legalTargets[square];
+  if (!targets) return;
+  var el = document.querySelector('.square-' + square);
+  if (el) el.classList.add('highlight-legal');
+  var pos = board.position();
+  targets.forEach(function(t) {
+    var e = document.querySelector('.square-' + t);
+    if (!e) return;
+    e.classList.add(pos[t] ? 'highlight-capture' : 'highlight-legal');
+  });
 }
 
-// ── Move list ─────────────────────────────────────────────────────────────────
-function updateMoveList() {
-  var history = game.history();
-  if (history.length === 0) {
-    document.getElementById('movelist').innerHTML =
-      '<span style="color:#6a7068;font-size:11px">No moves yet</span>';
-    return;
-  }
-
-  var html = '';
-  for (var i = 0; i < history.length; i++) {
-    var isLast = (i === history.length - 1);
-    if (i % 2 === 0) {
-      if (i) html += '</div>';
-      html += '<div class="mp"><span class="mn">' + (Math.floor(i / 2) + 1) + '.</span>';
-      html += '<span class="mw' + (isLast ? ' cur' : '') + '">' + history[i] + '</span>';
-    } else {
-      html += '<span class="mb' + (isLast ? ' cur' : '') + '">' + history[i] + '</span></div>';
-    }
-  }
-  // Close open pair if white just moved (odd total)
-  if (history.length % 2 === 1) html += '</div>';
-
-  var el = document.getElementById('movelist');
-  el.innerHTML = html;
-  el.scrollTop = el.scrollHeight;
+function onMouseout() {
+  document.querySelectorAll('.highlight-legal,.highlight-capture').forEach(function(e) {
+    e.classList.remove('highlight-legal','highlight-capture');
+  });
 }
 
-// ── Status ────────────────────────────────────────────────────────────────────
-function setStatus(cls, text) {
-  var el = document.getElementById('status');
-  el.className = cls;
-  el.textContent = text;
-}
+// Apply last-move and explosion highlights
+(function applyHighlights() {
+  LAST_MOVE_SQUARES.forEach(function(sq) {
+    var el = document.querySelector('.square-' + sq);
+    if (el) el.classList.add('highlight-lastmove');
+  });
+  EXPLODED_SQUARES.forEach(function(sq) {
+    var el = document.querySelector('.square-' + sq);
+    if (el) el.classList.add('highlight-explosion');
+  });
+})();
 
-function updateStatus() {
-  if (game.in_checkmate()) {
-    var winner = game.turn() === 'w' ? 'Engine wins' : 'You win';
-    setStatus('checkmate', 'Checkmate – ' + winner + '!');
-  } else if (game.in_stalemate()) {
-    setStatus('draw', 'Stalemate – Draw');
-  } else if (game.in_draw()) {
-    setStatus('draw', 'Draw');
-  } else if (game.in_check()) {
-    if (game.turn() === 'w') {
-      setStatus('check', 'You are in check!');
-    } else {
-      setStatus('check', 'Engine is in check');
-    }
-  } else if (game.turn() === 'w') {
-    setStatus('your-turn', 'Your turn (White)');
-  } else {
-    setStatus('thinking', 'Engine is thinking…');
-  }
-}
-
-// ── New game ──────────────────────────────────────────────────────────────────
-function newGame() {
-  game.reset();
-  board.start(true);
-  pendingPromotion = null;
-  document.getElementById('promo-modal').classList.remove('show');
-  updateMoveList();
-  setStatus('your-turn', 'Your turn (White)');
-}
+$(window).resize(function() { board.resize(); });
 </script>
 </body>
 </html>
 """
 
 
-def chess_play_interactive(
-    engine_name: str = "Best Engine",
-    engine_features_html: str = "",
-    height: int = 540,
+def chess_play_dnd(
+    fen: str,
+    legal_moves: list[str],
+    status: str = "ongoing",
+    last_move_uci: str | None = None,
+    exploded_squares: list[str] | None = None,
+    height: int = 520,
 ) -> None:
-    """Render a self-contained drag-and-drop chess game vs a random-move engine.
+    """Render a drag-and-drop chess board for interactive play.
 
-    All game state lives in JavaScript; no Python callbacks are needed.
-
-    Args:
-        engine_name:           Display name shown above the board for the engine.
-        engine_features_html:  Pre-built HTML (e.g. feature pills) injected into the
-                               features panel.  Pass an empty string to leave it blank.
-        height:                Component iframe height in pixels.
+    Moves are communicated back to Streamlit via query params.
+    All game logic stays server-side.
     """
-    def _esc(s: str) -> str:
-        return s.replace("\\", "\\\\").replace('"', '\\"')
+    # Build last-move square pair from UCI (e.g. "e2e4" → ["e2","e4"])
+    if last_move_uci and len(last_move_uci) >= 4:
+        lm_squares = [last_move_uci[:2], last_move_uci[2:4]]
+    else:
+        lm_squares = []
 
     html = (
-        _PLAY_TEMPLATE
-        .replace("__ENGINE_NAME__",       _esc(engine_name))
-        .replace("__FEATURE_PILLS_HTML__", engine_features_html)
-        .replace("__PIECE_THEME__",        _PIECE_THEME_URL)
+        _DND_TEMPLATE
+        .replace("__FEN__", fen)
+        .replace("__LEGAL_MOVES__", json.dumps(legal_moves))
+        .replace("__STATUS__", status)
+        .replace("__LAST_MOVE_SQUARES__", json.dumps(lm_squares))
+        .replace("__EXPLODED_SQUARES__", json.dumps(exploded_squares or []))
+        .replace("__PIECE_THEME__", _PIECE_THEME_URL)
     )
     components.html(html, height=height, scrolling=False)
 

@@ -538,14 +538,15 @@ def _render_live_panel(board_ph=None) -> None:
     step = max(1, total // 40)
     highlights = [results[i] for i in range(0, total, step)][:40]
 
-    # Pick the longest game with moves for the board animation (so the
-    # whole tournament-running animation has plenty of moves to play through).
-    board_animation_moves: list[str] = []
+    # Pick several long games to cycle through during the animation
+    animation_games: list[list[str]] = []
     if board_ph is not None:
-        candidates = [r for r in results if getattr(r, "move_list", None)]
-        if candidates:
-            longest = max(candidates, key=lambda r: len(r.move_list))
-            board_animation_moves = list(longest.move_list)
+        candidates = sorted(
+            (r for r in results if getattr(r, "move_list", None)),
+            key=lambda r: len(r.move_list),
+            reverse=True,
+        )
+        animation_games = [list(r.move_list) for r in candidates[:12]]
 
     # --- Animation (inline, no threads) ---
     st.markdown(f"### Running {variant.title()} Tournament")
@@ -554,52 +555,75 @@ def _render_live_panel(board_ph=None) -> None:
     feed_ph = st.empty()
 
     feed: list[str] = []
-    steps = 40  # 40 × 0.25s ≈ 10s
+    spotlight_idx = 0
 
-    chess_board = chess.Board() if board_animation_moves else None
-    moves_played = 0
-    n_moves = len(board_animation_moves)
+    ANIMATION_DURATION = 10.0
+    MOVE_INTERVAL = 0.055   # ~18 moves/sec — super fast playthrough
+    PROGRESS_INTERVAL = 0.22
+    TICK = 0.02
 
-    for i in range(steps + 1):
-        frac = i / steps
-        done = int(total * frac)
+    chess_board = chess.Board() if animation_games else None
+    game_idx = 0
+    move_idx = 0
 
-        progress_ph.progress(frac)
-        caption_ph.caption(f"**{done}** / **{total}** games  ·  **{frac * 100:.0f}%**")
+    t0 = time.time()
+    next_progress_at = 0.0
+    next_move_at = 0.0
 
-        # Add the spotlight games that fall in this step's window
-        if i > 0:
-            lo = int((i - 1) * len(highlights) / steps)
-            hi = int(i * len(highlights) / steps)
-            for r in highlights[lo:hi]:
-                feed.append(_game_feed_line(r))
+    while True:
+        elapsed = time.time() - t0
+        if elapsed >= ANIMATION_DURATION:
+            break
+        frac = min(1.0, elapsed / ANIMATION_DURATION)
 
-        feed_ph.markdown(_feed_html(feed), unsafe_allow_html=True)
+        # Progress + feed update (slow cadence)
+        if elapsed >= next_progress_at:
+            done = int(total * frac)
+            progress_ph.progress(frac)
+            caption_ph.caption(
+                f"**{done}** / **{total}** games  ·  **{frac * 100:.0f}%**"
+            )
+            target_spot = min(len(highlights), int(round(len(highlights) * frac)))
+            while spotlight_idx < target_spot:
+                feed.append(_game_feed_line(highlights[spotlight_idx]))
+                spotlight_idx += 1
+            feed_ph.markdown(_feed_html(feed), unsafe_allow_html=True)
+            next_progress_at = elapsed + PROGRESS_INTERVAL
 
-        # Advance the chess board through the sample game proportionally to
-        # the overall animation progress. If we exhaust the moves before the
-        # animation finishes, just hold the final position.
-        if chess_board is not None and board_ph is not None and n_moves > 0:
-            target = min(n_moves, int(round(n_moves * frac)))
-            last_uci: str | None = None
-            while moves_played < target:
-                uci = board_animation_moves[moves_played]
+        # Board update (fast cadence) — cycle through several games
+        if chess_board is not None and board_ph is not None and elapsed >= next_move_at:
+            cur_game = animation_games[game_idx] if animation_games else []
+            if move_idx >= len(cur_game):
+                # Finished current game; advance to next and reset board
+                game_idx = (game_idx + 1) % max(1, len(animation_games))
+                chess_board = chess.Board()
+                move_idx = 0
+                cur_game = animation_games[game_idx] if animation_games else []
+
+            if move_idx < len(cur_game):
+                uci = cur_game[move_idx]
                 try:
                     chess_board.push_uci(uci)
-                    last_uci = uci
+                    svg = render_board(
+                        chess_board.fen(), last_move_uci=uci, size=_BOARD_PX,
+                    )
+                    board_ph.markdown(_svg_html(svg), unsafe_allow_html=True)
                 except Exception:
-                    # Illegal move under standard rules (e.g. atomic-only): stop.
-                    moves_played = n_moves
-                    break
-                moves_played += 1
-            if last_uci is not None or i == 0:
-                svg = render_board(
-                    chess_board.fen(), last_move_uci=last_uci, size=_BOARD_PX,
-                )
-                board_ph.markdown(_svg_html(svg), unsafe_allow_html=True)
+                    # Illegal under standard rules — skip rest of this game
+                    move_idx = len(cur_game)
+                else:
+                    move_idx += 1
+            next_move_at = elapsed + MOVE_INTERVAL
 
-        if i < steps:
-            time.sleep(0.25)
+        time.sleep(TICK)
+
+    # Final frame: 100% progress and full spotlight feed
+    progress_ph.progress(1.0)
+    caption_ph.caption(f"**{total}** / **{total}** games  ·  **100%**")
+    while spotlight_idx < len(highlights):
+        feed.append(_game_feed_line(highlights[spotlight_idx]))
+        spotlight_idx += 1
+    feed_ph.markdown(_feed_html(feed), unsafe_allow_html=True)
 
     # Animation done — store analysis and jump to results
     st.session_state.update(

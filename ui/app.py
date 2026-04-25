@@ -22,7 +22,14 @@ from ui.constants import (
 )
 from ui.board import render_board, starting_fen
 from ui.chess_viewer import chess_game_viewer
-from ui.play_engine import engine_reply as _pure_engine_reply, game_status
+from ui.home import render_home_page
+from ui.play_engine import (
+    engine_reply as _pure_engine_reply,
+    game_status,
+    apply_move_for_ui,
+    get_legal_moves_uci,
+    game_status_variant,
+)
 
 # Real backend imports
 from agents.feature_subset_agent import FeatureSubsetAgent
@@ -35,6 +42,20 @@ from analysis.synergy import compute_pairwise_synergies
 from analysis.interpretation import generate_interpretation
 from reports.markdown_report import generate_markdown_report
 from features.registry import get_feature_names
+from variants.base import get_supported_variants
+
+_KNOWN_VARIANTS = set(get_supported_variants())
+
+
+def _normalize_variant(label: str) -> str:
+    """Map a variant label (e.g. 'atomic_d3') to the base variant ('atomic')."""
+    if label in _KNOWN_VARIANTS:
+        return label
+    for v in sorted(_KNOWN_VARIANTS, key=len, reverse=True):
+        if label.startswith(v):
+            return v
+    return "standard"
+
 
 # ---------------------------------------------------------------------------
 # Page config (must be first Streamlit call)
@@ -453,7 +474,7 @@ def _engine_reply(fen: str) -> str | None:
     variant = "standard"
     depth = 2
     snap = st.session_state.get("config_snapshot") or {}
-    variant = snap.get("variant", st.session_state.get("variant", "standard"))
+    variant = _normalize_variant(snap.get("variant", st.session_state.get("variant", "standard")))
     depth = snap.get("depth", st.session_state.get("depth", 2))
 
     if lb:
@@ -495,17 +516,50 @@ def _render_board_area() -> None:
             white = _agent_short_name(st.session_state.get("sample_game_white", "White"))
             black = _agent_short_name(st.session_state.get("sample_game_black", "Black"))
             result = st.session_state.get("sample_game_result", "")
+            snap = st.session_state.get("config_snapshot") or {}
+            replay_variant = _normalize_variant(
+                snap.get("variant", st.session_state.get("variant", "standard"))
+            )
             chess_game_viewer(moves=moves, white_name=white, black_name=black,
-                              result=result, board_size=_BOARD_PX, height=680)
+                              result=result, board_size=_BOARD_PX, height=680,
+                              variant=replay_variant)
             return
 
     if view == "play":
-        from ui.chess_viewer import chess_play_interactive
-        lb = st.session_state.get("leaderboard") or []
-        engine_name = _agent_short_name(lb[0].agent_name) if lb else "Best Engine"
-        chess_play_interactive(
-            engine_name=engine_name,
-            height=640,
+        from ui.chess_viewer import chess_play_dnd
+
+        fen = st.session_state.get("play_fen", chess.STARTING_FEN)
+        last_move = st.session_state.get("play_last_move")
+        exploded = st.session_state.get("play_exploded_squares")
+        status = st.session_state.get("play_status", "ongoing")
+        snap = st.session_state.get("config_snapshot") or {}
+        variant = _normalize_variant(
+            snap.get("variant", st.session_state.get("variant", "standard"))
+        )
+        depth = snap.get("depth", st.session_state.get("depth", 2))
+
+        # Check for drag-and-drop move via query params
+        if "chess_move" in st.query_params:
+            uci = st.query_params["chess_move"]
+            del st.query_params["chess_move"]
+            legal = get_legal_moves_uci(fen, variant)
+            if uci in legal:
+                _handle_player_move(uci, variant, depth)
+            return
+
+        # Get legal moves for the current position
+        legal = []
+        if status == "ongoing":
+            legal = get_legal_moves_uci(fen, variant)
+
+        # Render interactive drag-and-drop board
+        chess_play_dnd(
+            fen=fen,
+            legal_moves=legal,
+            status=status,
+            last_move_uci=last_move,
+            exploded_squares=exploded,
+            height=520,
         )
         return
 
@@ -670,7 +724,7 @@ def _render_analysis_panel() -> None:
     duration = st.session_state.get("duration_seconds")
     n_agents = len(st.session_state.get("agents") or lb)
     n_games = len(st.session_state.get("results") or [])
-    variant = snap.get("variant", st.session_state.get("variant", "standard"))
+    variant = _normalize_variant(snap.get("variant", st.session_state.get("variant", "standard")))
     dur_str = f"{duration:.0f}s" if duration else "--"
 
     def _pair_label(r) -> str:
@@ -710,6 +764,9 @@ def _render_analysis_panel() -> None:
                     play_fen=chess.STARTING_FEN,
                     play_moves=[],
                     play_status="ongoing",
+                    play_winner=None,
+                    play_last_move=None,
+                    play_exploded_squares=None,
                 )
                 st.rerun()
 
@@ -1040,8 +1097,14 @@ def _render_play_panel() -> None:
     best_name = _agent_short_name(lb[0].agent_name) if lb else "Engine"
     features = list(lb[0].features) if lb else []
 
+    snap = st.session_state.get("config_snapshot") or {}
+    variant = _normalize_variant(snap.get("variant", st.session_state.get("variant", "standard")))
+    depth = snap.get("depth", st.session_state.get("depth", 2))
+    fen = st.session_state.get("play_fen", chess.STARTING_FEN)
+    status = st.session_state.get("play_status", "ongoing")
+
     st.markdown(f"### vs {best_name}")
-    st.caption("Drag pieces on the board to make your move. You play White.")
+    st.caption(f"{variant.title()} chess -- depth {depth}")
 
     if features:
         st.markdown(
@@ -1054,15 +1117,146 @@ def _render_play_panel() -> None:
             unsafe_allow_html=True,
         )
 
-    snap = st.session_state.get("config_snapshot") or {}
-    variant = snap.get("variant", "standard")
-    depth = snap.get("depth", 2)
-    st.caption(f"{variant.title()} -- depth {depth}")
+    # Move history display
+    move_history = st.session_state.get("play_moves", [])
+    if move_history:
+        pairs = []
+        for i in range(0, len(move_history), 2):
+            num = i // 2 + 1
+            white_m = move_history[i]
+            black_m = move_history[i + 1] if i + 1 < len(move_history) else ""
+            pairs.append(f"{num}. {white_m} {black_m}")
+        st.text_area("Moves", value="  ".join(pairs), height=80, disabled=True)
+
+    # Game status
+    if status != "ongoing":
+        winner = st.session_state.get("play_winner")
+        if status in ("checkmate", "terminal"):
+            if winner == "w":
+                st.success("You win!")
+            elif winner == "b":
+                st.error(f"{best_name} wins!")
+            else:
+                st.info("Draw!")
+        elif status == "stalemate":
+            st.info("Stalemate -- Draw!")
+
+        if st.button("New Game", type="primary", use_container_width=True):
+            st.session_state.update(
+                play_fen=chess.STARTING_FEN,
+                play_moves=[],
+                play_status="ongoing",
+                play_winner=None,
+                play_last_move=None,
+                play_exploded_squares=None,
+            )
+            st.rerun()
+    else:
+        # Check whose turn it is
+        side = "w" if " w " in fen else "b"
+
+        if side == "w":
+            legal = get_legal_moves_uci(fen, variant)
+            if not legal:
+                st.warning("No legal moves!")
+            else:
+                st.markdown(f"**Your turn** -- drag a piece to move")
+                # Compact dropdown fallback
+                with st.expander("Or type a move (UCI)"):
+                    selected = st.selectbox(
+                        "Move",
+                        options=legal,
+                        key="play_move_select",
+                        label_visibility="collapsed",
+                    )
+                    if st.button("Submit", use_container_width=True):
+                        _handle_player_move(selected, variant, depth)
+        else:
+            # Engine's turn — safety net (normally processed immediately)
+            st.info(f"{best_name} is thinking...")
+            _handle_engine_move(variant, depth)
 
     st.markdown('<div style="margin-top:16px;"></div>', unsafe_allow_html=True)
     if st.button("Back to Analysis", use_container_width=True):
         st.session_state["view"] = "analysis"
         st.rerun()
+
+
+def _handle_player_move(uci: str, variant: str, depth: int) -> None:
+    """Apply player's move, then immediately get engine reply."""
+    fen = st.session_state["play_fen"]
+
+    # Apply player move with real variant logic
+    result = apply_move_for_ui(fen, uci, variant)
+    moves = list(st.session_state.get("play_moves", []))
+    moves.append(uci)
+
+    # Detect exploded squares for atomic
+    exploded = _detect_explosions(fen, result["fen"], uci) if variant == "atomic" else None
+
+    st.session_state["play_fen"] = result["fen"]
+    st.session_state["play_moves"] = moves
+    st.session_state["play_last_move"] = uci
+    st.session_state["play_exploded_squares"] = exploded
+
+    if result["status"] != "ongoing":
+        st.session_state["play_status"] = result["status"]
+        st.session_state["play_winner"] = result["winner"]
+        st.rerun()
+        return
+
+    # Engine reply
+    _handle_engine_move(variant, depth)
+
+
+def _handle_engine_move(variant: str, depth: int) -> None:
+    """Get and apply engine's move."""
+    fen = st.session_state["play_fen"]
+    engine_uci = _engine_reply(fen)
+
+    if engine_uci is None:
+        st.session_state["play_status"] = "stalemate"
+        st.rerun()
+        return
+
+    result = apply_move_for_ui(fen, engine_uci, variant)
+    moves = list(st.session_state.get("play_moves", []))
+    moves.append(engine_uci)
+
+    exploded = _detect_explosions(fen, result["fen"], engine_uci) if variant == "atomic" else None
+
+    st.session_state["play_fen"] = result["fen"]
+    st.session_state["play_moves"] = moves
+    st.session_state["play_last_move"] = engine_uci
+    st.session_state["play_exploded_squares"] = exploded
+    st.session_state["play_status"] = result["status"]
+    st.session_state["play_winner"] = result.get("winner")
+    st.rerun()
+
+
+def _detect_explosions(old_fen: str, new_fen: str, move_uci: str) -> list[str] | None:
+    """Compare board states to find squares where pieces were destroyed (atomic).
+
+    Returns list of algebraic square names that had pieces removed by explosion,
+    or None if no explosion occurred. Works correctly for en passant captures.
+    """
+    old_board = chess.Board(old_fen)
+    new_board = chess.Board(new_fen)
+
+    # Count pieces removed — compare all squares between old and new position.
+    # This catches normal captures, en passant, and atomic explosions.
+    disappeared = []
+    for sq in chess.SQUARES:
+        old_piece = old_board.piece_at(sq)
+        new_piece = new_board.piece_at(sq)
+        if old_piece is not None and new_piece is None:
+            disappeared.append(chess.square_name(sq))
+
+    # In a normal capture, exactly 1 piece disappears (from the source square;
+    # the captured piece's square gets the capturing piece).
+    # In atomic, 3+ pieces disappear (capturing piece + captured piece + adjacent).
+    # Threshold > 2 to distinguish atomic explosion from normal capture.
+    return disappeared if len(disappeared) > 2 else None
 
 
 # ---------------------------------------------------------------------------
@@ -1084,6 +1278,17 @@ def main() -> None:
             st.rerun()
         return
 
+    # Home landing page — full width, no column split
+    view = st.session_state.get("view", "home")
+    if view == "home":
+        render_home_page()
+        _, cta_col, _ = st.columns([1, 2, 1])
+        with cta_col:
+            if st.button("Enter EngineLab", type="primary", use_container_width=True):
+                st.session_state["view"] = "build"
+                st.rerun()
+        return
+
     st.markdown(HEADER_HTML, unsafe_allow_html=True)
     board_col, panel_col = st.columns([5, 4])
 
@@ -1091,7 +1296,6 @@ def main() -> None:
         _render_board_area()
 
     with panel_col:
-        view = st.session_state.get("view", "build")
         if view == "live":
             _render_live_panel()
         elif view == "analysis":

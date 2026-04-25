@@ -5,7 +5,7 @@ Provides both real play_game() and mock_play_game() for development.
 """
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from core.board import Board
 from core.move_generation import is_in_check
@@ -28,6 +28,7 @@ class GameResult:
     black_avg_nodes: float
     white_avg_time: float
     black_avg_time: float
+    move_list: list[str] = field(default_factory=list)  # UCI strings
 
 
 def mock_play_game(
@@ -78,6 +79,7 @@ def play_game(
     black_nodes: list[int] = []
     white_times: list[float] = []
     black_times: list[float] = []
+    move_history: list[str] = []
 
     for ply in range(max_moves):
         legal = gen_legal_fn(board)
@@ -96,6 +98,7 @@ def play_game(
                     black_avg_nodes=_avg(black_nodes),
                     white_avg_time=_avg(white_times),
                     black_avg_time=_avg(black_times),
+                    move_list=move_history,
                 )
             else:
                 return GameResult(
@@ -108,6 +111,7 @@ def play_game(
                     black_avg_nodes=_avg(black_nodes),
                     white_avg_time=_avg(white_times),
                     black_avg_time=_avg(black_times),
+                    move_list=move_history,
                 )
 
         if board.side_to_move == "w":
@@ -119,6 +123,7 @@ def play_game(
             black_nodes.append(nodes)
             black_times.append(time_s)
 
+        move_history.append(move.to_uci())
         board = apply_fn(board, move)
 
         # Check for terminal state set by variant-specific apply
@@ -134,6 +139,7 @@ def play_game(
                 black_avg_nodes=_avg(black_nodes),
                 white_avg_time=_avg(white_times),
                 black_avg_time=_avg(black_times),
+                move_list=move_history,
             )
 
     return GameResult(
@@ -146,6 +152,7 @@ def play_game(
         black_avg_nodes=_avg(black_nodes),
         white_avg_time=_avg(white_times),
         black_avg_time=_avg(black_times),
+        move_list=move_history,
     )
 
 

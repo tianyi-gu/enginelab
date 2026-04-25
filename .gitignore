@@ -40,6 +40,10 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+*.swo
+
+# Outputs (generated at runtime)
+outputs/
 
 # Git worktrees (sibling dirs)
 ../project-v*/

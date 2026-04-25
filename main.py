@@ -333,8 +333,8 @@ def play(
     if features:
         feat_tuple = tuple(sorted(f.strip() for f in features.split(",")))
     else:
-        # Best known from atomic tournaments
-        feat_tuple = ("capture_threats", "king_safety", "mobility")
+        # Best from 30-agent atomic tournament (81.9% win rate)
+        feat_tuple = ("bishop_pair", "mobility")
 
     weights = {f: 1.0 / len(feat_tuple) for f in feat_tuple}
     agent_name = "Agent_" + "__".join(feat_tuple)

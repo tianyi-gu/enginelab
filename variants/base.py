@@ -8,12 +8,22 @@ from typing import Callable
 from core.board import Board
 from core.move import Move
 from variants.standard import apply_standard_move, generate_standard_moves
+from variants.atomic import apply_atomic_move, generate_atomic_moves
+from variants.antichess import apply_antichess_move, generate_antichess_moves
 
 
 VARIANT_DISPATCH: dict[str, dict[str, Callable]] = {
     "standard": {
         "apply_move": apply_standard_move,
         "generate_legal_moves": generate_standard_moves,
+    },
+    "atomic": {
+        "apply_move": apply_atomic_move,
+        "generate_legal_moves": generate_atomic_moves,
+    },
+    "antichess": {
+        "apply_move": apply_antichess_move,
+        "generate_legal_moves": generate_antichess_moves,
     },
 }
 

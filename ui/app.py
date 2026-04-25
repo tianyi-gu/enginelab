@@ -76,6 +76,17 @@ def _starting_fen_for_variant(variant: str) -> str:
         import random as _rng
         from variants.chess960 import chess960_starting_position
         return chess960_starting_position(seed=_rng.randint(0, 959)).to_fen()
+    # Custom variant with setup_board function
+    from variants.base import VARIANT_DISPATCH
+    dispatch = VARIANT_DISPATCH.get(variant, {})
+    setup_fn = dispatch.get("setup_board")
+    if setup_fn is not None:
+        from core.board import Board
+        try:
+            board = setup_fn(Board.starting_position())
+            return board.to_fen()
+        except Exception:
+            pass  # fall back to standard starting position
     return chess.STARTING_FEN
 
 
@@ -347,11 +358,12 @@ def _generate_custom_variant(description: str) -> None:
     from variants.llm_generate import generate_variant_code
     from variants.dynamic_loader import load_variant_from_code, validate_variant, register_variant
 
-    st.session_state["custom_variant_status"] = "generating"
     st.session_state["custom_variant_error"] = None
 
-    # Step 1: Call Ollama
-    result = generate_variant_code(description)
+    # Step 1: Call Ollama (blocking, ~15-30s)
+    with st.spinner("Generating variant code from description... this may take 15-30 seconds"):
+        result = generate_variant_code(description)
+
     if result.get("error"):
         st.session_state["custom_variant_status"] = "error"
         st.session_state["custom_variant_error"] = result["error"]
@@ -360,10 +372,11 @@ def _generate_custom_variant(description: str) -> None:
 
     code = result["code"]
     st.session_state["custom_variant_code"] = code
-    st.session_state["custom_variant_status"] = "validating"
 
     # Step 2: Load the code
-    load_result = load_variant_from_code(code)
+    with st.spinner("Loading generated code..."):
+        load_result = load_variant_from_code(code)
+
     if load_result.get("error"):
         st.session_state["custom_variant_status"] = "error"
         st.session_state["custom_variant_error"] = f"Code loading failed: {load_result['error']}"
@@ -371,7 +384,9 @@ def _generate_custom_variant(description: str) -> None:
         return
 
     # Step 3: Validate with test games
-    val_result = validate_variant(load_result["apply_move"], load_result["generate_legal_moves"])
+    with st.spinner("Validating with test games..."):
+        val_result = validate_variant(load_result["apply_move"], load_result["generate_legal_moves"])
+
     if not val_result["valid"]:
         st.session_state["custom_variant_status"] = "error"
         st.session_state["custom_variant_error"] = f"Validation failed: {val_result['error']}"
@@ -380,7 +395,8 @@ def _generate_custom_variant(description: str) -> None:
 
     # Step 4: Register and select
     variant_name = "customvariant"
-    register_variant(variant_name, load_result["apply_move"], load_result["generate_legal_moves"])
+    register_variant(variant_name, load_result["apply_move"], load_result["generate_legal_moves"],
+                      setup_fn=load_result.get("setup_board"))
 
     st.session_state["custom_variant_name"] = variant_name
     st.session_state["custom_variant_status"] = "ready"
@@ -393,43 +409,78 @@ def _generate_custom_variant(description: str) -> None:
 # ---------------------------------------------------------------------------
 
 _tournament_lock = threading.Lock()
+# Shared dict for thread→main communication.
+# Stored inside st.session_state so it survives Streamlit's script re-execution.
+# The thread receives this dict by reference and writes into it directly.
+if "_tournament_shared" not in st.session_state:
+    st.session_state["_tournament_shared"] = {}
+_tournament_shared: dict = st.session_state["_tournament_shared"]
 
 
-def _run_live_tournament_thread(config: dict) -> None:
-    """Run a real tournament in a background thread."""
+def _run_live_tournament_thread(config: dict, agents: list, shared: dict) -> None:
+    """Run a real tournament in a background thread.
+
+    Writes progress to *shared* (a plain dict passed by reference) instead of
+    st.session_state, which requires a ScriptRunContext.
+    """
+    import traceback as _tb
     try:
         variant = config["variant"]
-        features = config["selected_features"]
         depth = config.get("depth", 2)
         max_moves = config.get("max_moves", 80)
         seed = config.get("seed", 42)
 
-        agents = generate_feature_subset_agents(features, seed=seed)
+        print(f"[TOURNAMENT] Starting: variant={variant}, agents={len(agents)}, "
+              f"depth={depth}, max_moves={max_moves}", flush=True)
 
-        def on_game_complete(result):
+        collected_results: list = []
+
+        def on_game_complete(games_done, total, result):
+            collected_results.append(result)
             with _tournament_lock:
-                results = st.session_state.get("results") or []
-                results.append(result)
-                st.session_state["results"] = results
-                st.session_state["games_completed"] = len(results)
+                shared["games_completed"] = games_done
+                shared["results"] = list(collected_results)
+            if games_done % 10 == 0 or games_done == total:
+                print(f"[TOURNAMENT] Progress: {games_done}/{total}", flush=True)
 
         results = run_round_robin(
             agents=agents,
             variant=variant,
             depth=depth,
             max_moves=max_moves,
-            base_seed=seed,
+            seed=seed,
             on_game_complete=on_game_complete,
         )
 
-        analysis = _build_analysis(results, config)
+        print(f"[TOURNAMENT] Finished: {len(results)} games", flush=True)
+        try:
+            analysis = _build_analysis(results, config)
+            print(f"[TOURNAMENT] Analysis built OK", flush=True)
+        except Exception as analysis_exc:
+            print(f"[TOURNAMENT] _build_analysis CRASHED: {analysis_exc}", flush=True)
+            _tb.print_exc()
+            with _tournament_lock:
+                shared["error"] = f"Analysis failed: {analysis_exc}"
+                shared["running"] = False
+                shared["done"] = True
+            return
         with _tournament_lock:
-            st.session_state.update(**analysis, running=False)
+            shared["analysis"] = analysis
+            shared["running"] = False
+            shared["done"] = True
 
     except Exception as exc:
+        print(f"[TOURNAMENT] ERROR: {exc}")
+        _tb.print_exc()
         with _tournament_lock:
-            st.session_state["error"] = str(exc)
-            st.session_state["running"] = False
+            shared["error"] = (
+                f"Tournament failed: {exc}\n\n"
+                "The generated variant code may have a bug. "
+                "Try a different description or simpler variant rules."
+            )
+            shared["running"] = False
+            shared["done"] = True
+            _tournament_shared["done"] = True
 
 
 # ---------------------------------------------------------------------------
@@ -455,6 +506,7 @@ def _start_tournament() -> None:
 
     if os.path.exists(precomputed_path):
         # Pre-computed path (built-in variants with cached data)
+        print(f"[START] Pre-computed path for {variant}: {precomputed_path}")
         _cached_load_results(precomputed_path)
         st.session_state.update(
             running=True,
@@ -464,11 +516,21 @@ def _start_tournament() -> None:
         )
     else:
         # Live tournament path (custom variants or variants without pre-computed data)
-        # Use fast settings for demo-friendly speed (~10s)
+        # Use fast settings for demo-friendly speed (~5-10s)
         config["depth"] = 1
-        config["max_moves"] = 40
-        agents = generate_feature_subset_agents(config["selected_features"], max_agents=10, seed=config["seed"])
+        config["max_moves"] = 30
+        agents = generate_feature_subset_agents(config["selected_features"], max_agents=6, seed=config["seed"])
         total = len(agents) * (len(agents) - 1)
+        print(f"[START] Live tournament for {variant}: {len(agents)} agents, {total} games")
+        shared = {
+            "games_completed": 0,
+            "results": [],
+            "running": True,
+            "done": False,
+            "error": None,
+            "analysis": None,
+        }
+        st.session_state["_tournament_shared"] = shared
         st.session_state.update(
             running=True,
             view="live",
@@ -480,7 +542,7 @@ def _start_tournament() -> None:
             _precomputed_path="",
         )
         thread = threading.Thread(
-            target=_run_live_tournament_thread, args=(config,), daemon=True
+            target=_run_live_tournament_thread, args=(config, agents, shared), daemon=True
         )
         thread.start()
 
@@ -690,22 +752,17 @@ def _render_build_panel() -> None:
     )
     st.session_state["custom_variant_description"] = description
 
-    generating = st.session_state.get("custom_variant_status") == "generating"
     if st.button(
         "Generate Variant",
-        disabled=not description.strip() or generating,
+        disabled=not description.strip(),
         use_container_width=True,
         key="gen_variant_btn",
     ):
         _generate_custom_variant(description)
 
     cv_status = st.session_state.get("custom_variant_status")
-    if cv_status == "generating":
-        st.info("Generating variant code from description...")
-    elif cv_status == "validating":
-        st.info("Validating generated code with test games...")
-    elif cv_status == "ready":
-        st.success("Custom variant ready!")
+    if cv_status == "ready":
+        st.success("Custom variant ready! Select it above, then click Build Engine to train.")
         with st.expander("View generated code"):
             st.code(st.session_state.get("custom_variant_code", ""), language="python")
     elif cv_status == "error":
@@ -871,23 +928,31 @@ def _render_live_panel(board_ph=None) -> None:
         view="analysis",
         duration_seconds=total / 38,  # plausible elapsed time label
     )
+    st.toast("Engine training complete! Ready to play.", icon="✅")
+    st.balloons()
     st.rerun()
 
 
 def _render_live_panel_polling() -> None:
-    """Poll a background tournament thread for real progress."""
+    """Poll a background tournament thread for real progress.
+
+    Reads from _tournament_shared (plain dict written by the thread)
+    rather than st.session_state (which requires ScriptRunContext).
+    """
     config = st.session_state.get("_tournament_config") or {}
     variant = config.get("variant", st.session_state.get("variant", "standard"))
+    total = st.session_state.get("total_games", 1)
 
     st.markdown(f"### Running {variant.title()} Tournament (live)")
     progress_ph = st.empty()
     caption_ph = st.empty()
 
+    shared = st.session_state.get("_tournament_shared", {})
     with _tournament_lock:
-        running = st.session_state.get("running", False)
-        done = st.session_state.get("games_completed", 0)
-        total = st.session_state.get("total_games", 1)
-        error = st.session_state.get("error")
+        done = shared.get("games_completed", 0)
+        error = shared.get("error")
+        thread_done = shared.get("done", False)
+        analysis = shared.get("analysis")
 
     if error:
         st.error(error)
@@ -899,16 +964,20 @@ def _render_live_panel_polling() -> None:
     progress_ph.progress(frac)
     caption_ph.caption(f"**{done}** / **{total}** games  ·  **{frac * 100:.0f}%**")
 
-    if not running and done > 0:
-        # Tournament finished — switch to analysis
+    if thread_done and analysis:
+        # Tournament finished — apply analysis and switch to results
+        st.session_state.update(**analysis, running=False)
         st.session_state["view"] = "analysis"
+        st.toast("Engine training complete! Ready to play.", icon="✅")
+        st.balloons()
         st.rerun()
-    elif running:
-        time.sleep(1.0)
+    elif not thread_done:
+        time.sleep(0.5)
         st.rerun()
     else:
+        st.error("Tournament thread finished but produced no results.")
         st.session_state["view"] = "build"
-        st.rerun()
+        st.session_state["running"] = False
 
 
 # ---------------------------------------------------------------------------

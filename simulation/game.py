@@ -77,6 +77,14 @@ def play_game(
         board = Board.starting_position()
     apply_fn = get_apply_move(variant)
     gen_legal_fn = get_generate_legal_moves(variant)
+    # Apply custom variant starting position setup if available
+    from variants.base import VARIANT_DISPATCH
+    setup_fn = VARIANT_DISPATCH.get(variant, {}).get("setup_board")
+    if setup_fn is not None:
+        try:
+            board = setup_fn(board)
+        except Exception:
+            pass  # fall back to standard starting position
 
     # Build engines for each side
     white_engine = _make_engine(white_agent, depth, seed, variant=variant)

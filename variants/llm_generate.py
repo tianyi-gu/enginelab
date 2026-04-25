@@ -1,13 +1,14 @@
-"""LLM-based variant code generation via Ollama."""
+"""LLM-based variant code generation via OpenAI API."""
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.request
 import urllib.error
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-DEFAULT_MODEL = "deepseek-coder-v2"
+OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+DEFAULT_MODEL = "gpt-4o"
 
 _SYSTEM_PROMPT = """You are a chess variant code generator. You must produce exactly two Python functions that define a chess variant.
 
@@ -72,10 +73,27 @@ from core.coordinates import algebraic_to_square, square_to_algebraic
    Then add your variant-specific logic on top of the returned board.
 
 ## CRITICAL rules for generate_customvariant_moves:
-1. Start from generate_legal_moves(board) for standard-legal moves, or generate_moves(board)
+1. NEVER mutate the input board. If you need to modify the board, call board.copy() first.
+2. Start from generate_legal_moves(board) for standard-legal moves, or generate_moves(board)
    for pseudo-legal moves if you need to add custom filtering.
-2. Filter or augment as needed for your variant rules.
-3. Return a list[Move]. Return empty list if no moves available.
+3. Filter or augment as needed for your variant rules.
+4. Return a list[Move]. Return empty list if no moves available.
+5. If pieces change type (e.g. queens become knights), implement this in apply_customvariant_move
+   by modifying the copied board AFTER the move, NOT in generate_customvariant_moves.
+
+## Optional: setup_customvariant_board
+If your variant changes the starting position (e.g. replacing pieces, removing pieces, adding pieces),
+you MUST also define:
+
+```python
+def setup_customvariant_board(board: Board) -> Board:
+    # Modify the starting position for your variant. Returns new Board (never mutate input).
+```
+
+This receives a standard starting position Board and returns the modified starting board.
+For example, if queens become knights, this function should replace both queens with knights
+on the starting board so the game begins with the correct pieces.
+If your variant uses the standard starting position unchanged, you may omit this function.
 
 ## Complete example: Antichess (forced captures, lose all pieces to win)
 
@@ -122,52 +140,66 @@ def generate_variant_code(
     temperature: float = 0.2,
     timeout_seconds: int = 120,
 ) -> dict[str, str | None]:
-    """Call Ollama to generate variant code from a natural language description.
+    """Call OpenAI API to generate variant code from a natural language description.
+
+    Requires OPENAI_API_KEY environment variable to be set.
 
     Returns:
         {"code": str, "error": str | None}
     """
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return {"code": "", "error": "OPENAI_API_KEY environment variable is not set."}
     try:
-        raw = _call_ollama(
+        raw = _call_openai(
             prompt=description,
             system=_SYSTEM_PROMPT,
             model=model,
             temperature=temperature,
             timeout=timeout_seconds,
+            api_key=api_key,
         )
         code = _extract_code(raw)
         return {"code": code, "error": None}
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode() if exc.fp else ""
+        return {"code": "", "error": f"OpenAI API error {exc.code}: {body[:200]}"}
     except urllib.error.URLError as exc:
-        return {"code": "", "error": f"Cannot connect to Ollama at {OLLAMA_URL}: {exc.reason}"}
+        return {"code": "", "error": f"Cannot connect to OpenAI API: {exc.reason}"}
     except Exception as exc:
         return {"code": "", "error": str(exc)}
 
 
-def _call_ollama(
+def _call_openai(
     prompt: str,
     system: str,
     model: str,
     temperature: float,
     timeout: int,
+    api_key: str,
 ) -> str:
-    """POST to Ollama /api/generate and return the response text."""
+    """POST to OpenAI chat completions and return the assistant message."""
     payload = json.dumps({
         "model": model,
-        "prompt": prompt,
-        "system": system,
-        "stream": False,
-        "options": {"temperature": temperature},
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": temperature,
     }).encode()
 
     req = urllib.request.Request(
-        OLLAMA_URL,
+        OPENAI_URL,
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         body = json.loads(resp.read().decode())
-    return body.get("response", "")
+    return body["choices"][0]["message"]["content"]
 
 
 def _extract_code(raw: str) -> str:

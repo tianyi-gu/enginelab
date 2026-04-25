@@ -9,8 +9,21 @@ from core.board import Board
 from core.move import Move
 
 
+_PRELOADED_IMPORTS = """
+from core.board import Board
+from core.move import Move
+from core.apply_move import apply_move
+from core.move_generation import generate_moves, generate_legal_moves, is_in_check, is_square_attacked
+from core.types import piece_color, piece_type, opponent_color
+from core.coordinates import algebraic_to_square, square_to_algebraic
+"""
+
+
 def load_variant_from_code(code: str) -> dict:
     """Execute generated code and extract the two required functions.
+
+    All available imports are pre-loaded into the namespace so the LLM-generated
+    code doesn't fail due to missing imports.
 
     Returns:
         {"apply_move": Callable | None,
@@ -19,6 +32,7 @@ def load_variant_from_code(code: str) -> dict:
     """
     namespace: dict = {"__builtins__": __builtins__}
     try:
+        exec(_PRELOADED_IMPORTS, namespace)  # noqa: S102
         exec(code, namespace)  # noqa: S102
     except Exception:
         return {
@@ -43,7 +57,8 @@ def load_variant_from_code(code: str) -> dict:
             "error": "Missing function: generate_customvariant_moves",
         }
 
-    return {"apply_move": apply_fn, "generate_legal_moves": gen_fn, "error": None}
+    setup_fn = namespace.get("setup_customvariant_board")
+    return {"apply_move": apply_fn, "generate_legal_moves": gen_fn, "setup_board": setup_fn, "error": None}
 
 
 def validate_variant(
@@ -98,11 +113,15 @@ def register_variant(
     variant_name: str,
     apply_fn: Callable,
     gen_fn: Callable,
+    setup_fn: Callable | None = None,
 ) -> None:
     """Register the variant into VARIANT_DISPATCH for tournament use."""
     from variants.base import VARIANT_DISPATCH
 
-    VARIANT_DISPATCH[variant_name] = {
+    entry = {
         "apply_move": apply_fn,
         "generate_legal_moves": gen_fn,
     }
+    if setup_fn is not None:
+        entry["setup_board"] = setup_fn
+    VARIANT_DISPATCH[variant_name] = entry

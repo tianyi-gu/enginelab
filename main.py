@@ -314,5 +314,134 @@ def _print_synergies(synergies, limit: int = 10) -> None:
     console.print(table)
 
 
+@app.command()
+def play(
+    variant: str = typer.Option("atomic", help="Chess variant"),
+    depth: int = typer.Option(3, help="Engine search depth"),
+    features: str = typer.Option(None, help="Comma-separated features (default: best known)"),
+    color: str = typer.Option("w", help="Your color: w or b"),
+) -> None:
+    """Play interactively against the best engine agent."""
+    from core.board import Board
+    from core.move import Move
+    from core.coordinates import algebraic_to_square, square_to_algebraic
+    from agents.feature_subset_agent import FeatureSubsetAgent
+    from search.alpha_beta import AlphaBetaEngine
+    from variants.base import get_apply_move, get_generate_legal_moves
+
+    # Build agent
+    if features:
+        feat_tuple = tuple(sorted(f.strip() for f in features.split(",")))
+    else:
+        # Best known from atomic tournaments
+        feat_tuple = ("capture_threats", "king_safety", "mobility")
+
+    weights = {f: 1.0 / len(feat_tuple) for f in feat_tuple}
+    agent_name = "Agent_" + "__".join(feat_tuple)
+    agent = FeatureSubsetAgent(agent_name, feat_tuple, weights)
+    engine = AlphaBetaEngine(agent, depth, variant=variant)
+
+    apply_fn = get_apply_move(variant)
+    gen_legal_fn = get_generate_legal_moves(variant)
+
+    board = Board.starting_position()
+    console.print(f"\n[bold]EngineLab Interactive Play[/bold]")
+    console.print(f"Variant: {variant} | Engine: {agent_name} (depth {depth})")
+    console.print(f"You are [bold]{'White' if color == 'w' else 'Black'}[/bold]")
+    console.print(f"Enter moves as UCI (e.g. e2e4, a7a8q for promotion)")
+    console.print(f"Type [bold]quit[/bold] to exit, [bold]moves[/bold] to see legal moves\n")
+
+    engine_color = "b" if color == "w" else "w"
+
+    while not board.is_terminal():
+        _render_board(board, console)
+
+        legal = gen_legal_fn(board)
+        if not legal:
+            if board.side_to_move == color:
+                console.print("[red]No legal moves — you lose![/red]")
+            else:
+                console.print("[green]Engine has no legal moves — you win![/green]")
+            break
+
+        if board.side_to_move == engine_color:
+            console.print("[dim]Engine thinking...[/dim]", end="")
+            move = engine.choose_move(board)
+            uci = move.to_uci()
+            console.print(
+                f"\r[bold cyan]Engine plays:[/bold cyan] {uci}"
+                f"  [dim]({engine.nodes_searched} nodes, "
+                f"{engine.search_time_seconds:.2f}s)[/dim]"
+            )
+            board = apply_fn(board, move)
+        else:
+            while True:
+                try:
+                    raw = console.input("[bold green]Your move> [/bold green]").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    console.print("\nGoodbye!")
+                    return
+
+                if raw == "quit":
+                    console.print("Goodbye!")
+                    return
+                if raw == "moves":
+                    move_strs = sorted(m.to_uci() for m in legal)
+                    console.print(f"Legal: {', '.join(move_strs)}")
+                    continue
+
+                # Parse UCI
+                if len(raw) < 4:
+                    console.print("[red]Invalid. Use UCI format like e2e4[/red]")
+                    continue
+                try:
+                    start = algebraic_to_square(raw[0:2])
+                    end = algebraic_to_square(raw[2:4])
+                    promo = raw[4].upper() if len(raw) > 4 else None
+                    if color == "b" and promo:
+                        promo = promo.lower()
+                    candidate = Move(start=start, end=end, promotion=promo)
+                except (ValueError, IndexError):
+                    console.print("[red]Invalid. Use UCI format like e2e4[/red]")
+                    continue
+
+                if candidate in legal:
+                    board = apply_fn(board, candidate)
+                    break
+                else:
+                    console.print("[red]Illegal move. Type 'moves' to see options.[/red]")
+
+    if board.is_terminal():
+        _render_board(board, console)
+        if board.winner == color:
+            console.print("[bold green]You win![/bold green]")
+        elif board.winner == engine_color:
+            console.print("[bold red]Engine wins![/bold red]")
+        elif board.winner == "draw":
+            console.print("[bold yellow]Draw![/bold yellow]")
+        else:
+            console.print(f"[bold]Game over. Winner: {board.winner}[/bold]")
+
+
+def _render_board(board, console) -> None:
+    """Render the board with Unicode pieces."""
+    piece_unicode = {
+        "K": "\u2654", "Q": "\u2655", "R": "\u2656", "B": "\u2657", "N": "\u2658", "P": "\u2659",
+        "k": "\u265a", "q": "\u265b", "r": "\u265c", "b": "\u265d", "n": "\u265e", "p": "\u265f",
+    }
+    console.print()
+    for rank in range(7, -1, -1):
+        row = f"  {rank + 1} "
+        for col in range(8):
+            p = board.grid[rank][col]
+            sq_dark = (rank + col) % 2 == 0
+            bg = "on grey23" if sq_dark else "on grey50"
+            ch = piece_unicode.get(p, " ")
+            row += f"[{bg}] {ch} [/{bg}]"
+        console.print(row)
+    console.print("     a  b  c  d  e  f  g  h")
+    console.print(f"  [dim]{board.side_to_move} to move | ply {board.move_count}[/dim]\n")
+
+
 if __name__ == "__main__":
     app()

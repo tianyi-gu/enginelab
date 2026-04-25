@@ -30,6 +30,7 @@ from ui.play_engine import (
     apply_move_for_ui,
     get_legal_moves_uci,
     game_status_variant,
+    _parse_uci,
 )
 
 # Real backend imports
@@ -108,8 +109,15 @@ _CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 *, *::before, *::after {
-    font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
     box-sizing: border-box;
+}
+/* Apply Inter only to text-bearing elements, NOT to icon spans (Material
+   Symbols etc) which need their own font to render glyphs. Otherwise the
+   expander arrow shows as the literal text "_arrow_right". */
+body, .stApp, h1, h2, h3, h4, h5, h6, p, label, button, input,
+.stMarkdown, .stCaption, .stText, .stRadio, .stCheckbox,
+div[data-testid="stMarkdownContainer"] {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 body, .stApp { background: #161512 !important; color: #bababa !important; }
 .block-container {
@@ -555,22 +563,14 @@ def _render_board_area() -> None:
         )
         depth = snap.get("depth", st.session_state.get("depth", 2))
 
-        # Check for drag-and-drop move via query params
-        if "chess_move" in st.query_params:
-            uci = st.query_params["chess_move"]
-            del st.query_params["chess_move"]
-            legal = get_legal_moves_uci(fen, variant)
-            if uci in legal:
-                _handle_player_move(uci, variant, depth)
-            return
-
         # Get legal moves for the current position
-        legal = []
+        legal: list[str] = []
         if status == "ongoing":
             legal = get_legal_moves_uci(fen, variant)
 
-        # Render interactive drag-and-drop board
-        chess_play_dnd(
+        # Render interactive board; component returns {"uci": ..., "id": ...}
+        # when the user makes a move, or None otherwise.
+        result = chess_play_dnd(
             fen=fen,
             legal_moves=legal,
             status=status,
@@ -578,6 +578,14 @@ def _render_board_area() -> None:
             exploded_squares=exploded,
             height=520,
         )
+
+        # Apply move only when a *new* move arrives (id changed since last apply)
+        if isinstance(result, dict) and result.get("uci"):
+            move_id = result.get("id")
+            if move_id != st.session_state.get("_last_applied_move_id"):
+                st.session_state["_last_applied_move_id"] = move_id
+                if result["uci"] in legal:
+                    _handle_player_move(result["uci"], variant, depth)
         return
 
     variant = st.session_state.get("variant", "standard")
@@ -589,6 +597,10 @@ def _render_board_area() -> None:
 # ---------------------------------------------------------------------------
 
 def _render_build_panel() -> None:
+    # If the user navigated back from a running simulation, cancel it
+    if st.session_state.get("running"):
+        st.session_state["running"] = False
+
     variant = st.session_state["variant"]
     data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", "data")
 
@@ -736,68 +748,120 @@ def _render_live_panel(board_ph=None) -> None:
     step = max(1, total // 40)
     highlights = [results[i] for i in range(0, total, step)][:40]
 
-    # Pick the longest game with moves for the board animation (so the
-    # whole tournament-running animation has plenty of moves to play through).
-    board_animation_moves: list[str] = []
+    # Use ALL decisive games (someone wins) for the animation, sorted by
+    # length so dramatic long games come first. We blast through them at
+    # max speed during the 10s window.
+    animation_games: list[list[str]] = []
     if board_ph is not None:
-        candidates = [r for r in results if getattr(r, "move_list", None)]
-        if candidates:
-            longest = max(candidates, key=lambda r: len(r.move_list))
-            board_animation_moves = list(longest.move_list)
+        decisive = [r for r in results
+                    if getattr(r, "move_list", None) and r.winner is not None]
+        pool = decisive or [r for r in results if getattr(r, "move_list", None)]
+        pool.sort(key=lambda r: len(r.move_list), reverse=True)
+        animation_games = [list(r.move_list) for r in pool]
 
     # --- Animation (inline, no threads) ---
     st.markdown(f"### Running {variant.title()} Tournament")
+    st.caption("Click ⚙ Build above to cancel.")
     progress_ph = st.empty()
     caption_ph = st.empty()
     feed_ph = st.empty()
 
     feed: list[str] = []
-    steps = 40  # 40 × 0.25s ≈ 10s
+    spotlight_idx = 0
 
-    chess_board = chess.Board() if board_animation_moves else None
-    moves_played = 0
-    n_moves = len(board_animation_moves)
+    ANIMATION_DURATION = 10.0
+    MOVE_INTERVAL = 0.012   # target ~80 moves/sec — render+network usually
+                            # caps real rate around 40-50/sec, looks like a blur
+    EXPLOSION_HOLD = 0.05   # quick red flash so the explosion still registers
+    PROGRESS_INTERVAL = 0.22
+    TICK = 0.005
 
-    for i in range(steps + 1):
-        frac = i / steps
-        done = int(total * frac)
+    # Variant-aware move application for the animation
+    from core.board import Board as _ProjBoard
+    from variants.base import get_apply_move as _get_apply_move
+    _apply_fn = _get_apply_move(variant) if animation_games else None
 
-        progress_ph.progress(frac)
-        caption_ph.caption(f"**{done}** / **{total}** games  ·  **{frac * 100:.0f}%**")
+    def _animate_step(cur_fen: str, uci: str) -> tuple[str, list[str] | None]:
+        """Apply uci with variant rules. Returns (new_fen, exploded_squares|None)."""
+        proj_board = _ProjBoard.from_fen(cur_fen)
+        move = _parse_uci(uci, proj_board.side_to_move)
+        new_board = _apply_fn(proj_board, move)
+        new_fen_local = new_board.to_fen()
+        exploded_local = None
+        if variant == "atomic":
+            exploded_local = _detect_explosions(cur_fen, new_fen_local, uci)
+        return new_fen_local, exploded_local
 
-        # Add the spotlight games that fall in this step's window
-        if i > 0:
-            lo = int((i - 1) * len(highlights) / steps)
-            hi = int(i * len(highlights) / steps)
-            for r in highlights[lo:hi]:
-                feed.append(_game_feed_line(r))
+    current_fen = chess.STARTING_FEN if animation_games else None
+    game_idx = 0
+    move_idx = 0
 
-        feed_ph.markdown(_feed_html(feed), unsafe_allow_html=True)
+    t0 = time.time()
+    next_progress_at = 0.0
+    next_move_at = 0.0
 
-        # Advance the chess board through the sample game proportionally to
-        # the overall animation progress. If we exhaust the moves before the
-        # animation finishes, just hold the final position.
-        if chess_board is not None and board_ph is not None and n_moves > 0:
-            target = min(n_moves, int(round(n_moves * frac)))
-            last_uci: str | None = None
-            while moves_played < target:
-                uci = board_animation_moves[moves_played]
+    while True:
+        elapsed = time.time() - t0
+        if elapsed >= ANIMATION_DURATION:
+            break
+        frac = min(1.0, elapsed / ANIMATION_DURATION)
+
+        # Progress + feed update (slow cadence)
+        if elapsed >= next_progress_at:
+            done = int(total * frac)
+            progress_ph.progress(frac)
+            caption_ph.caption(
+                f"**{done}** / **{total}** games  ·  **{frac * 100:.0f}%**"
+            )
+            target_spot = min(len(highlights), int(round(len(highlights) * frac)))
+            while spotlight_idx < target_spot:
+                feed.append(_game_feed_line(highlights[spotlight_idx]))
+                spotlight_idx += 1
+            feed_ph.markdown(_feed_html(feed), unsafe_allow_html=True)
+            next_progress_at = elapsed + PROGRESS_INTERVAL
+
+        # Board update (fast cadence) — cycle through several games
+        if (current_fen is not None and board_ph is not None
+                and animation_games and elapsed >= next_move_at):
+            cur_game = animation_games[game_idx]
+            if move_idx >= len(cur_game):
+                # Finished current game; advance to next and reset board
+                game_idx = (game_idx + 1) % len(animation_games)
+                current_fen = chess.STARTING_FEN
+                move_idx = 0
+                cur_game = animation_games[game_idx]
+
+            exploded_now: list[str] | None = None
+            if move_idx < len(cur_game):
+                uci = cur_game[move_idx]
                 try:
-                    chess_board.push_uci(uci)
-                    last_uci = uci
+                    new_fen, exploded_now = _animate_step(current_fen, uci)
+                    svg = render_board(
+                        new_fen,
+                        last_move_uci=uci,
+                        exploded_squares=exploded_now,
+                        size=_BOARD_PX,
+                    )
+                    board_ph.markdown(_svg_html(svg), unsafe_allow_html=True)
+                    current_fen = new_fen
+                    move_idx += 1
                 except Exception:
-                    # Illegal move under standard rules (e.g. atomic-only): stop.
-                    moves_played = n_moves
-                    break
-                moves_played += 1
-            if last_uci is not None or i == 0:
-                svg = render_board(
-                    chess_board.fen(), last_move_uci=last_uci, size=_BOARD_PX,
-                )
-                board_ph.markdown(_svg_html(svg), unsafe_allow_html=True)
+                    # Move not applicable under variant rules — end this game
+                    move_idx = len(cur_game)
+            # Hold longer if this frame is an explosion so the red flash is visible
+            next_move_at = elapsed + (
+                EXPLOSION_HOLD if exploded_now else MOVE_INTERVAL
+            )
 
-        if i < steps:
-            time.sleep(0.25)
+        time.sleep(TICK)
+
+    # Final frame: 100% progress and full spotlight feed
+    progress_ph.progress(1.0)
+    caption_ph.caption(f"**{total}** / **{total}** games  ·  **100%**")
+    while spotlight_idx < len(highlights):
+        feed.append(_game_feed_line(highlights[spotlight_idx]))
+        spotlight_idx += 1
+    feed_ph.markdown(_feed_html(feed), unsafe_allow_html=True)
 
     # Animation done — store analysis and jump to results
     st.session_state.update(
@@ -1294,16 +1358,17 @@ def _render_play_panel() -> None:
             if not legal:
                 st.warning("No legal moves!")
             else:
-                st.caption("Drag a piece or click it, then click a highlighted square")
-                mc1, mc2 = st.columns([4, 1])
-                selected = mc1.selectbox(
-                    "Or pick UCI move",
-                    options=legal,
-                    key="play_move_select",
-                    label_visibility="collapsed",
-                )
-                if mc2.button("Go", use_container_width=True):
-                    _handle_player_move(selected, variant, depth)
+                st.caption("Drag a piece, or click it then click a highlighted square.")
+                with st.expander("Or pick a UCI move", expanded=False):
+                    mc1, mc2 = st.columns([4, 1])
+                    selected = mc1.selectbox(
+                        "UCI move",
+                        options=legal,
+                        key="play_move_select",
+                        label_visibility="collapsed",
+                    )
+                    if mc2.button("Go", use_container_width=True):
+                        _handle_player_move(selected, variant, depth)
         else:
             # Engine's turn — safety net (normally processed immediately)
             st.info(f"{best_name} is thinking...")
@@ -1312,7 +1377,11 @@ def _render_play_panel() -> None:
 
 
 def _handle_player_move(uci: str, variant: str, depth: int) -> None:
-    """Apply player's move, then immediately get engine reply."""
+    """Apply player's move and rerun immediately so the player sees their
+    move on the board with no latency. The engine response is triggered
+    on the next render (when side-to-move flips to black) so it can
+    'think' visibly without holding up the player's frame.
+    """
     fen = st.session_state["play_fen"]
 
     # Apply player move with real variant logic
@@ -1331,16 +1400,17 @@ def _handle_player_move(uci: str, variant: str, depth: int) -> None:
     if result["status"] != "ongoing":
         st.session_state["play_status"] = result["status"]
         st.session_state["play_winner"] = result["winner"]
-        st.rerun()
-        return
 
-    # Engine reply
-    _handle_engine_move(variant, depth)
+    st.rerun()
 
 
 def _handle_engine_move(variant: str, depth: int) -> None:
-    """Get and apply engine's move."""
+    """Get and apply engine's move with a small thinking delay."""
     fen = st.session_state["play_fen"]
+    # Brief "thinking" pause so play feels like a real online engine
+    # (Lichess/Chess.com style) instead of an instant reply.
+    import random as _r
+    time.sleep(_r.uniform(0.4, 1.1))
     engine_uci = _engine_reply(fen)
 
     if engine_uci is None:
@@ -1367,26 +1437,31 @@ def _detect_explosions(old_fen: str, new_fen: str, move_uci: str) -> list[str] |
     """Compare board states to find squares where pieces were destroyed (atomic).
 
     Returns list of algebraic square names that had pieces removed by explosion,
-    or None if no explosion occurred. Works correctly for en passant captures.
+    or None if no explosion occurred.
+
+    Atomic capture signature: the destination square is EMPTY after the move
+    (in standard chess, the capturing piece would be on the destination).
     """
+    if len(move_uci) < 4:
+        return None
     from ui.board import _strip_extended_fen
     old_board = chess.Board(_strip_extended_fen(old_fen))
     new_board = chess.Board(_strip_extended_fen(new_fen))
 
-    # Count pieces removed — compare all squares between old and new position.
-    # This catches normal captures, en passant, and atomic explosions.
-    disappeared = []
-    for sq in chess.SQUARES:
-        old_piece = old_board.piece_at(sq)
-        new_piece = new_board.piece_at(sq)
-        if old_piece is not None and new_piece is None:
-            disappeared.append(chess.square_name(sq))
+    dest_sq = chess.parse_square(move_uci[2:4])
+    # No capture happened (dest was empty before) — not an atomic explosion
+    if old_board.piece_at(dest_sq) is None:
+        return None
+    # In standard chess, dest now holds the capturing piece. In atomic, dest is
+    # empty because both pieces exploded.
+    if new_board.piece_at(dest_sq) is not None:
+        return None
 
-    # In a normal capture, exactly 1 piece disappears (from the source square;
-    # the captured piece's square gets the capturing piece).
-    # In atomic, 3+ pieces disappear (capturing piece + captured piece + adjacent).
-    # Threshold > 2 to distinguish atomic explosion from normal capture.
-    return disappeared if len(disappeared) > 2 else None
+    return [
+        chess.square_name(sq)
+        for sq in chess.SQUARES
+        if old_board.piece_at(sq) is not None and new_board.piece_at(sq) is None
+    ]
 
 
 # ---------------------------------------------------------------------------

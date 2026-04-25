@@ -1,58 +1,53 @@
 # Development Workflow
 
 This document describes the parallel development process for EngineLab.
-It covers branching, stub-based decoupling, testing conventions, and
-integration procedures.
+It covers branching, the Foundation-first approach, testing conventions,
+and integration procedures.
 
 ---
 
-## 1. Parallel Development via Stubs
+## 1. Foundation-First Development
 
 ### Rationale
 
-EngineLab has a linear dependency chain:
+EngineLab has a dependency chain:
 
 ```
 Core -> Features -> Agents/Search -> Simulation/Tournament -> Analysis/CLI
 ```
 
-Naive sequential development would waste 80% of the team's capacity. Instead,
-we use **stub-based decoupling**: all shared interfaces are implemented as
-`NotImplementedError` stubs on `main` before any area branches. Each developer
-imports from stubs and replaces them with real implementations independently.
+Instead of sequential development, we split the project into a **Foundation**
+(built first on `main`) and **two parallel workstreams** that can develop
+simultaneously with zero coordination.
 
-This is an application of the **Dependency Inversion Principle** (Martin, 2000)
-and mirrors the **Contract-First Development** pattern common in distributed
-systems engineering (Fowler, 2002).
+### Foundation
+
+Before any parallel work begins, build a complete, runnable standard chess
+engine on `main`. This includes:
+
+- Full Board class (with castling rights, en passant tracking)
+- Complete pseudo-legal move generation (all piece types, castling, en passant,
+  all promotion types)
+- Check detection and legal move generation
+- Standard chess variant with variant dispatch
+- Material-only evaluation and basic alpha-beta at depth 1
+- A working `play_game()` function
+- Stub files for all remaining interfaces
+
+Both developers branch from this commit.
 
 ### Stub Structure
 
-Every function/class in `docs/interfaces.md` gets a stub. Example:
+Every function/class from `docs/interfaces.md` that is NOT part of the
+Foundation gets a stub. Example:
 
 ```python
-# core/move_generation.py (stub)
+# features/material.py (stub)
 from core.board import Board
-from core.move import Move
 
-def generate_moves(board: Board) -> list[Move]:
-    raise NotImplementedError("Stub: implement in Area 1")
-
-def generate_moves_for_color(board: Board, color: str) -> list[Move]:
+def material(board: Board, color: str) -> float:
     raise NotImplementedError("Stub: implement in Area 1")
 ```
-
-Stubs must:
-- Have correct function signatures (name, parameters, return type annotation)
-- Import correctly (so downstream code can `from core.move_generation import generate_moves`)
-- Raise `NotImplementedError` with a message identifying the owning area
-
-### Stub Commit
-
-The stub commit is the **first commit after repo setup** and should contain:
-- All `__init__.py` files
-- All stub modules for Sections 2-20 of `docs/interfaces.md`
-- A minimal `requirements.txt`
-- An empty `outputs/` directory with `.gitkeep` files
 
 ---
 
@@ -61,22 +56,17 @@ The stub commit is the **first commit after repo setup** and should contain:
 ### Branch Naming
 
 ```
-main                          # stubs + merged implementations
-area-1-core-variant           # Developer 1
-area-2-features               # Developer 2
-area-3-agents-search          # Developer 3
-area-4-simulation-tournament  # Developer 4
-area-5-analysis-cli           # Developer 5
+main                  # Foundation + merged implementations
+area-1-engine         # Developer 1: variants, features, search
+area-2-harness        # Developer 2: tournament, analysis, CLI
 ```
 
 ### Branch Lifecycle
 
-1. All branches are created from `main` after the stub commit.
-2. Each developer works exclusively on their branch.
-3. When an area is complete and tests pass, it is merged to `main` in
-   dependency order (see Section 4).
-4. After Area 1 merges, Areas 2-5 should rebase onto the updated `main` to
-   pick up real implementations. Repeat as each area merges.
+1. Foundation is built and committed to `main`.
+2. Both developers branch from `main`.
+3. Each developer works exclusively on their branch.
+4. At integration: Area 1 merges first, then Area 2 rebases and merges.
 
 ### File Ownership
 
@@ -88,50 +78,81 @@ write to modules outside their area.
 
 ---
 
-## 3. Testing Conventions
+## 3. Zero-Dependency Workstream Split
+
+```
+Workstream ENGINE (Area 1)              Workstream HARNESS (Area 2)
+================================        ================================
+Atomic variant rules                    Tournament runner (round-robin)
+Antichess variant rules (optional)      Leaderboard computation
+10-feature evaluation library           Result I/O (JSON, CSV)
+Feature registry                        Analysis (marginals, synergy)
+Agent generation (exhaustive/sampled)   Report generation (Markdown)
+Full evaluation function                CLI (Typer)
+Production alpha-beta search            Optional Streamlit UI
+      |                                        |
+      +------ play_game() interface -----------+
+              GameResult dataclass
+```
+
+**Why this works with zero dependencies:**
+
+- **ENGINE** produces a working `play_game(white, black, variant, depth,
+  max_moves, seed) -> GameResult` function. It has no knowledge of
+  tournaments, leaderboards, or analysis.
+
+- **HARNESS** consumes `GameResult` objects. During development, it uses a
+  `mock_play_game()` that returns random results:
+
+  ```python
+  def mock_play_game(white, black, **kwargs) -> GameResult:
+      rng = random.Random(kwargs.get("seed", 42))
+      return GameResult(
+          white_agent=white.name, black_agent=black.name,
+          winner=rng.choice(["w", "b", None]),
+          moves=rng.randint(10, 80),
+          termination_reason="move_cap",
+          white_avg_nodes=0, black_avg_nodes=0,
+          white_avg_time=0, black_avg_time=0,
+      )
+  ```
+
+  This lets HARNESS develop and test its entire pipeline (tournament
+  scheduling, leaderboard computation, analysis, reporting, CLI) with
+  **zero imports from ENGINE**. At integration time, swap the mock for
+  the real `play_game` -- one line change.
+
+---
+
+## 4. Testing Conventions
 
 ### Test Structure
 
-Each area has its own test file(s) in `tests/`. Developers write tests for
+Each area has its own test files in `tests/`. Developers write tests for
 their own area only.
 
-### Testing with Stubs
+### Testing with Stubs and Mocks
 
-Areas that depend on unimplemented upstream areas should use one of:
+- **Area 1 (ENGINE):** Tests use the Foundation's working Board and move
+  generation. Set up known board positions as fixtures.
 
-1. **Fixture-based mocking:** Create pytest fixtures that return known board
-   states, feature values, or game results. This lets you test your logic
-   without real upstream implementations.
+- **Area 2 (HARNESS):** Use `mock_play_game()` for tournament tests. Use
+  synthetic `LeaderboardRow` lists for analysis tests. At integration time,
+  tests automatically activate against real implementations.
 
-2. **Synthetic data:** For analysis (Area 5), create fake `LeaderboardRow`
-   lists with known statistical properties to validate marginal/synergy
-   calculations.
-
-3. **Skip on NotImplementedError:** Use `pytest.importorskip` or
-   `pytest.mark.skipif` for tests that require real upstream implementations.
-   These tests will automatically activate once the dependency merges.
-
-Example fixture for Area 3 (testing evaluation without real features):
-
-```python
-@pytest.fixture
-def mock_board():
-    board = Board.starting_position()
-    # Set up a known position...
-    return board
-```
-
-### Test Naming
+### Test Files
 
 ```
-tests/test_board.py                # Area 1
-tests/test_move_generation.py      # Area 1
+tests/test_board.py                # Foundation / Area 1
+tests/test_move_generation.py      # Foundation / Area 1
+tests/test_standard.py             # Foundation / Area 1
 tests/test_atomic.py               # Area 1
-tests/test_features.py             # Area 2
-tests/test_agents.py               # Area 3
-tests/test_alpha_beta.py           # Area 3
-tests/test_tournament.py           # Area 4
-tests/test_analysis.py             # Area 5
+tests/test_antichess.py            # Area 1 (optional)
+tests/test_features.py             # Area 1
+tests/test_agents.py               # Area 1
+tests/test_alpha_beta.py           # Area 1
+tests/test_tournament.py           # Area 2
+tests/test_analysis.py             # Area 2
 ```
 
 ### Running Tests
@@ -140,28 +161,28 @@ tests/test_analysis.py             # Area 5
 # Run all tests
 pytest
 
-# Run a specific area
-pytest tests/test_board.py tests/test_move_generation.py tests/test_atomic.py
+# Run Foundation tests
+pytest tests/test_board.py tests/test_move_generation.py tests/test_standard.py
+
+# Run Area 1 tests
+pytest tests/test_atomic.py tests/test_features.py tests/test_agents.py tests/test_alpha_beta.py
+
+# Run Area 2 tests
+pytest tests/test_tournament.py tests/test_analysis.py
 
 # Run with verbose output
 pytest -v
-
-# Run with stdout visible (useful for debugging)
-pytest -s
 ```
 
 ---
 
-## 4. Integration Procedure
+## 5. Integration Procedure
 
 ### Merge Order
 
 ```
-1. Area 1: Core + Atomic      (no dependencies)
-2. Area 2: Features            (depends on Area 1)
-3. Area 3: Agents + Search     (depends on Areas 1 + 2)
-4. Area 4: Simulation + Tourney (depends on Areas 1 + 3)
-5. Area 5: Analysis + CLI      (depends on Areas 1-4)
+1. Area 1: ENGINE (variants, features, agents, search)
+2. Area 2: HARNESS (tournament, analysis, CLI) — after rebasing onto updated main
 ```
 
 ### Per-Merge Checklist
@@ -177,25 +198,25 @@ Before merging Area N:
 
 ### Post-Integration Test Sequence
 
-After all 5 areas are merged:
+After both areas are merged:
 
 ```bash
 # 1. All unit tests
 pytest
 
 # 2. Quick smoke test (2 features, 3 agents, 6 games)
-python main.py full-pipeline --variant atomic --depth 1 --max-moves 20
+python main.py full-pipeline --variant standard --depth 1 --max-moves 20
 
-# 3. Medium test (4 features, 15 agents, 210 games)
+# 3. Medium test (5 features, 31 agents, 930 games)
 python main.py full-pipeline --variant atomic --depth 2 --max-moves 80
 
-# 4. Full test (5 features, 31 agents, 930 games)
+# 4. Full test (10 features, ~80 sampled agents)
 python main.py full-pipeline --variant atomic --depth 2 --max-moves 80
 ```
 
 ---
 
-## 5. Communication Protocol
+## 6. Communication Protocol
 
 ### Interface Change Requests
 
@@ -205,19 +226,14 @@ If a developer discovers that a shared interface needs to change:
 2. Propose the change to the team with:
    - What needs to change
    - Why it needs to change
-   - Which other areas are affected
+   - Which other area is affected
 3. If approved, update `docs/interfaces.md` first.
 4. Then implement the change in the owning area.
-5. Other areas update their code to match.
-
-### Status Updates
-
-Each developer should track their progress against the checkpoints listed in
-`Instructions.MD` Section 8.
+5. The other area updates their code to match.
 
 ---
 
-## 6. Code Quality Standards
+## 7. Code Quality Standards
 
 ### Style
 
@@ -231,20 +247,7 @@ Each developer should track their progress against the checkpoints listed in
 
 - Required on all public functions and classes
 - One-line summary, then optionally a longer description
-- Use Google-style docstrings:
-  ```python
-  def evaluate(board: Board, color: str, agent: FeatureSubsetAgent) -> float:
-      """Evaluate a position from color's perspective.
-
-      Args:
-          board: Current board state.
-          color: "w" or "b".
-          agent: The feature-subset agent to use.
-
-      Returns:
-          Evaluation score. Positive = good for color.
-      """
-  ```
+- Use Google-style docstrings
 
 ### Error Handling
 
@@ -257,16 +260,29 @@ Each developer should track their progress against the checkpoints listed in
 
 ---
 
-## 7. Academic Foundations
+## 8. Runtime Parallelism (Multiprocessing)
 
-The development methodology in EngineLab draws on established practices:
+Beyond development parallelism, the tournament itself is embarrassingly
+parallel at the game level. Each game is a pure function:
+
+```
+Input:  (white_agent, black_agent, variant, depth, max_moves, seed)
+Output: GameResult
+```
+
+No shared state, no side effects. Use `multiprocessing.Pool` to run games
+across CPU cores. With 4 workers, a large tournament completes ~4x faster.
+Add a `--workers` CLI flag. Default to 1 (sequential) for determinism
+debugging, then scale up for production runs.
+
+---
+
+## 9. Academic Foundations
 
 ### Contract-First Development
 
-The stub-based approach follows the **Design by Contract** principle
+The Foundation-first approach follows the **Design by Contract** principle
 (Meyer, 1992), where interfaces are specified before implementations.
-This enables parallel development while preserving correctness at
-integration boundaries.
 
 > Meyer, B. (1992). "Applying Design by Contract."
 > *IEEE Computer*, 25(10), 40-51.
@@ -283,101 +299,16 @@ formula is the standard two-way interaction term from ANOVA.
 ### Feature Subset Selection
 
 The exhaustive evaluation of all feature subsets follows the **wrapper method**
-for feature selection (Kohavi & John, 1997), where a learning algorithm
-(here, alpha-beta search + tournament) evaluates each subset's performance.
+for feature selection (Kohavi & John, 1997).
 
 > Kohavi, R. & John, G. H. (1997). "Wrappers for Feature Subset Selection."
 > *Artificial Intelligence*, 97(1-2), 273-324.
 
 ### Alpha-Beta Search
 
-The search engine implements the alpha-beta algorithm, whose efficiency was
-formally analyzed by Knuth and Moore (1975). The negamax formulation
-simplifies implementation for two-player zero-sum games.
+The search engine implements the alpha-beta algorithm (Knuth & Moore, 1975).
+The negamax formulation simplifies implementation for two-player zero-sum
+games.
 
 > Knuth, D. E. & Moore, R. W. (1975). "An Analysis of Alpha-Beta Pruning."
 > *Artificial Intelligence*, 6(4), 293-326.
-
----
-
-## 8. Zero-Dependency Workstream Split
-
-The 5 development areas (Section 8 of Instructions.MD) organize the code
-by module. But for **developer/agent parallelism**, the natural split is
-into 2 independent workstreams with a single shared interface:
-
-```
-Workstream ENGINE (Areas 1 + 2 + 3)     Workstream HARNESS (Areas 4 + 5)
-================================        ================================
-Board, Move, MoveGen                    Tournament runner
-Variant dispatch (standard, atomic)     Leaderboard
-Features + Registry                     Result I/O
-Evaluation + AlphaBeta                  Analysis (marginals, synergy)
-                                        Report generation
-                                        CLI
-      |                                        |
-      +------ play_game() interface -----------+
-              GameResult dataclass
-```
-
-**Why this works with zero dependencies:**
-
-- **ENGINE** produces a working `play_game(white, black, variant, depth,
-  max_moves, seed) -> GameResult` function. It has no knowledge of
-  tournaments, leaderboards, or analysis.
-
-- **HARNESS** consumes `GameResult` objects. During development, it uses a
-  mock `play_game()` that returns random results:
-
-  ```python
-  def mock_play_game(white, black, **kwargs) -> GameResult:
-      return GameResult(
-          white_agent=white.name, black_agent=black.name,
-          winner=random.choice(["w", "b", None]),
-          moves=random.randint(10, 80),
-          termination_reason="move_cap",
-          white_avg_nodes=0, black_avg_nodes=0,
-          white_avg_time=0, black_avg_time=0,
-      )
-  ```
-
-  This lets HARNESS develop and test its entire pipeline (tournament
-  scheduling, leaderboard computation, analysis, reporting, CLI) with
-  **zero imports from ENGINE**. At integration time, swap the mock for
-  the real `play_game` -- one line change.
-
-### Assignment Options
-
-**Option A: 2 developers, 2 workstreams (most parallel)**
-
-| Developer | Workstream | Scope                  |
-|-----------|------------|------------------------|
-| Dev 1     | ENGINE     | Areas 1 + 2 + 3       |
-| Dev 2     | HARNESS    | Areas 4 + 5            |
-
-Both work simultaneously with zero coordination until integration.
-
-**Option B: 3 developers, 3 workstreams (balanced)**
-
-| Developer | Workstream      | Scope                          |
-|-----------|-----------------|--------------------------------|
-| Dev 1     | CORE            | Area 1 (board + variants)      |
-| Dev 2     | ENGINE          | Areas 2 + 3 (features + search)|
-| Dev 3     | HARNESS         | Areas 4 + 5 (tournament + CLI) |
-
-Dev 2 uses Board stubs until Dev 1 delivers. Dev 3 uses mock play_game
-throughout. Integration order: Dev 1 -> Dev 2 -> Dev 3.
-
-### Runtime Parallelism (Multiprocessing)
-
-Beyond development parallelism, the tournament itself is embarrassingly
-parallel at the game level. Each game is a pure function:
-
-```
-Input:  (white_agent, black_agent, variant, depth, max_moves, seed)
-Output: GameResult
-```
-
-No shared state, no side effects. Use `multiprocessing.Pool` to run games
-across CPU cores. With 4 workers, a 930-game tournament completes ~4x faster.
-See Instructions.MD Section 8 (Area 4) for the implementation pattern.

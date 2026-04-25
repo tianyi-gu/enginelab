@@ -1,459 +1,356 @@
 # Agent Definitions
 
 This document defines the exact scope, prompts, and acceptance criteria for
-each developer (or Claude Code agent) working on EngineLab. Each agent
-operates on a dedicated branch and owns a specific set of files.
+each developer (or Claude Code agent) working on EngineLab. The project is
+split into a shared Foundation and two parallel development areas.
 
 ---
 
-## Developer 1: Core Chess State + Atomic Variant
+## Foundation: Working Chess Engine (Built First on `main`)
+
+### Goal
+
+Deliver a minimal but complete standard chess engine that both developers
+can branch from. Includes full move generation (castling, en passant,
+promotion to all pieces), check legality, standard variant, material-only
+evaluation, basic alpha-beta at depth 1, and a working `play_game()`.
+
+### Files
+
+```
+core/__init__.py, core/types.py, core/board.py, core/move.py
+core/coordinates.py, core/move_generation.py, core/apply_move.py
+variants/__init__.py, variants/base.py, variants/standard.py
+agents/__init__.py, agents/feature_subset_agent.py, agents/evaluation.py
+search/__init__.py, search/alpha_beta.py
+simulation/__init__.py, simulation/game.py
++ all __init__.py files and stubs for remaining modules
+```
+
+### Prompt
+
+```
+You are building the Foundation of EngineLab: a complete, runnable standard
+chess engine that other developers will build on.
+
+Read Instructions.MD and docs/interfaces.md completely before starting.
+
+Implement:
+1. Board class (core/board.py): 8x8 grid, FEN piece chars, deep copy,
+   castling_rights dict, en_passant_square field.
+2. Move dataclass (core/move.py): frozen, UCI output, promotion field.
+3. Square type alias, color helpers (core/types.py).
+4. Full pseudo-legal move generation (core/move_generation.py):
+   - All piece types (pawn, knight, bishop, rook, queen, king)
+   - Castling (kingside and queenside, with rights tracking)
+   - En passant capture
+   - Promotion to all 4 piece types (Q, R, B, N)
+   - Deterministic order: iterate row 0-7, col 0-7
+5. Check detection: is_square_attacked, is_in_check
+6. Legal move generation: pseudo-legal filtered by check legality
+7. Standard variant (variants/standard.py): apply move, generate legal
+   moves, winner detection (king captured = opponent wins)
+8. Variant dispatch (variants/base.py): register "standard"
+9. Material-only evaluation: simple material difference eval
+10. Basic AlphaBetaEngine at depth 1
+11. Minimal play_game() in simulation/game.py
+12. Stub files for ALL remaining interfaces (raise NotImplementedError)
+
+CRITICAL conventions:
+- FEN pieces: uppercase=white, lowercase=black, None=empty
+- Colors: "w" / "b" only
+- Coordinates: grid[row][col], row 0 = rank 1, col 0 = file a
+- Board.copy() must be a deep copy
+- Castling rights: {"K": True, "Q": True, "k": True, "q": True}
+- En passant: set en_passant_square when pawn double-pushes, clear otherwise
+
+Verify:
+- Board starting position correct, copy is deep
+- 20 pseudo-legal white moves from starting position
+- Castling generates correctly
+- En passant capture works
+- Promotion to all 4 piece types works
+- Legal move filter removes moves leaving king in check
+- Standard game completes (material-only eval, depth 1)
+```
+
+### Acceptance Criteria
+
+| ID  | Criterion                                                        |
+|-----|------------------------------------------------------------------|
+| 0A  | Board starting position correct, copy() is deep                  |
+| 0B  | Starting position generates exactly 20 white pseudo-legal moves  |
+| 0C  | Castling generates correctly (kingside and queenside)            |
+| 0D  | En passant capture works                                         |
+| 0E  | Promotion to all 4 piece types works                             |
+| 0F  | Legal move filter removes moves that leave king in check         |
+| 0G  | Standard game completes (material-only eval, depth 1)            |
+| 0H  | Variant dispatch resolves "standard" correctly                   |
+
+---
+
+## Developer 1: Variants, Features & Search (ENGINE)
 
 ### Branch
 
-`area-1-core-variant`
+`area-1-engine`
 
 ### Files Owned
 
 ```
-core/__init__.py
-core/types.py
-core/board.py
-core/move.py
-core/coordinates.py
-core/move_generation.py
-core/apply_move.py
-variants/__init__.py
-variants/base.py
-variants/standard.py
+core/move_generation.py        # extend for variant-specific filtering
+core/apply_move.py             # extend for variant-specific application
 variants/atomic.py
-variants/antichess.py          # optional Phase 3
+variants/antichess.py
+variants/standard.py           # extend if needed
+variants/base.py               # register new variants
+features/__init__.py
+features/registry.py
+features/material.py
+features/piece_position.py
+features/center_control.py
+features/king_safety.py
+features/king_danger.py
+features/mobility.py
+features/pawn_structure.py
+features/bishop_pair.py
+features/rook_activity.py
+features/capture_threats.py
+agents/feature_subset_agent.py
+agents/generate_agents.py
+agents/evaluation.py
+agents/__init__.py
+search/alpha_beta.py
+search/__init__.py
 tests/test_board.py
 tests/test_move_generation.py
 tests/test_standard.py
 tests/test_atomic.py
-tests/test_antichess.py        # optional Phase 3
-```
-
-### Must Not Edit
-
-`features/`, `agents/`, `search/`, `simulation/`, `tournament/`,
-`analysis/`, `reports/`, `ui/`, `main.py`
-
-### Prompt
-
-```
-You are implementing Area 1 of EngineLab: core chess state and variant
-rules. BUILD STANDARD CHESS FIRST (Phase 1), then Atomic (Phase 2),
-then optionally Antichess (Phase 3).
-
-Read Instructions.MD and docs/interfaces.md completely before starting.
-
-PHASE 1 -- Standard Chess (build this first, get it fully working):
-1. Board class in core/board.py (8x8 grid, FEN piece chars, deep copy)
-2. Move dataclass in core/move.py (frozen, UCI output)
-3. Square type alias and color helpers in core/types.py
-4. Square-to-algebraic conversion in core/coordinates.py
-5. Pseudo-legal move generation in core/move_generation.py:
-   - Pawn (single push, double push, diagonal capture, queen promotion)
-   - Knight, Bishop, Rook, Queen, King
-   - generate_moves(board) and generate_moves_for_color(board, color)
-   - CRITICAL: move generation order must be deterministic (iterate
-     pieces row 0-7, col 0-7; destinations in consistent order)
-6. Standard move application in core/apply_move.py
-7. Standard variant in variants/standard.py:
-   - apply_standard_move: move piece, capture if destination occupied,
-     pawn promotion, set winner if king captured
-   - generate_standard_moves: same as generate_moves (no filtering for MVP)
-8. Variant dispatch in variants/base.py:
-   - VARIANT_DISPATCH dict mapping variant name -> functions
-   - get_apply_move(variant), get_generate_legal_moves(variant)
-
-PHASE 2 -- Atomic Chess (add after Phase 1 works):
-9. Atomic variant in variants/atomic.py:
-   - apply_atomic_move: explosion on capture (removes capturing piece,
-     captured piece, adjacent non-pawn pieces; pawns immune)
-   - generate_atomic_moves: filter captures that would explode own king
-   - Winner detection on king explosion
-
-PHASE 3 -- Antichess (optional):
-10. Antichess variant in variants/antichess.py:
-    - apply_antichess_move: same as standard
-    - generate_antichess_moves: if captures exist, return only captures
-    - Winner: player with no pieces left wins
-
-Conventions (CRITICAL):
-- FEN piece chars: uppercase=white, lowercase=black, None=empty
-- Colors: "w" / "b" only
-- Coordinates: grid[row][col], row 0 = rank 1, col 0 = file a
-- Board.copy() must be a deep copy
-- Do NOT implement castling, en passant, or underpromotion
-
-Verify each phase before moving to the next:
-Phase 1: pytest tests/test_board.py tests/test_move_generation.py tests/test_standard.py
-Phase 2: pytest tests/test_atomic.py
-Phase 3: pytest tests/test_antichess.py
-```
-
-### Acceptance Criteria
-
-**Phase 1 (Standard -- build first):**
-
-| ID  | Test                                                     |
-|-----|----------------------------------------------------------|
-| 1A  | Board starting position is correct                       |
-| 1B  | 20 pseudo-legal white moves from starting position       |
-| 1C  | Standard captures and promotion work                     |
-| 1D  | 100 random standard plies without crash                  |
-| 1E  | Variant dispatch resolves "standard" correctly            |
-
-**Phase 2 (Atomic):**
-
-| ID  | Test                                                     |
-|-----|----------------------------------------------------------|
-| 1F  | Atomic explosion removes correct pieces, pawns survive   |
-| 1G  | Self-destructive captures are filtered out               |
-| 1H  | 100 random atomic plies without crash                    |
-
-**Phase 3 (Antichess -- optional):**
-
-| ID  | Test                                                     |
-|-----|----------------------------------------------------------|
-| 1I  | Forced capture rule works                                |
-| 1J  | Player with no pieces left wins                          |
-
----
-
-## Developer 2: Feature Library + Registry
-
-### Branch
-
-`area-2-features`
-
-### Files Owned
-
-```
-features/__init__.py
-features/registry.py
-features/material.py
-features/mobility.py
-features/king_danger.py
-features/king_safety.py
-features/capture_threats.py
+tests/test_antichess.py
 tests/test_features.py
-```
-
-### Must Not Edit
-
-`core/`, `variants/`, `agents/`, `search/`, `simulation/`, `tournament/`,
-`analysis/`, `reports/`, `ui/`, `main.py`
-
-### May Import From
-
-`core`, `variants`
-
-### Prompt
-
-```
-You are implementing Area 2 of EngineLab: evaluation features and
-feature registry.
-
-Read Instructions.MD and docs/interfaces.md completely before starting.
-
-Implement 5 features, each with signature:
-    feature(board: Board, color: str) -> float
-    Positive = good for color. Must not mutate the board.
-
-1. material: own material - opponent material
-   Piece values: P=1, N=3, B=3, R=5, Q=9, K=0
-   Use piece_type(piece).upper() for lookup.
-
-2. mobility: own move count - opponent move count
-   Use generate_moves_for_color(board, color).
-
-3. enemy_king_danger: pressure near opponent king
-   For each own piece: += 1/max(chebyshev_distance, 1)
-   For each adjacent square of enemy king attacked by own piece: += 1
-   If enemy king missing: return 10.0
-
-4. own_king_safety: -enemy_king_danger(board, opponent)
-   If own king missing: return -10.0
-
-5. capture_threats: value of available captures
-   For each capture: += captured piece value
-                     += 3 * adjacent enemy non-pawn pieces that would explode
-                     += 100 if enemy king would explode
-
-Registry in features/registry.py:
-- FEATURES dict mapping name -> function
-- FEATURE_DESCRIPTIONS dict mapping name -> description string
-- get_feature_names(), get_feature_function(name), get_feature_description(name)
-
-Conventions:
-- Colors: "w" / "b"
-- FEN pieces: uppercase=white, lowercase=black
-- Chebyshev distance: max(abs(r1-r2), abs(c1-c2))
-
-Verify: pytest tests/test_features.py
-```
-
-### Acceptance Criteria
-
-| ID  | Test                                                 |
-|-----|------------------------------------------------------|
-| 2A  | material returns 0.0 at starting position            |
-| 2B  | All 5 functions return float                         |
-| 2C  | No feature mutates the board                         |
-| 2D  | Features handle missing kings gracefully             |
-| 2E  | test_features.py passes                              |
-
----
-
-## Developer 3: Agents + Evaluation + Alpha-Beta Search
-
-### Branch
-
-`area-3-agents-search`
-
-### Files Owned
-
-```
-agents/__init__.py
-agents/feature_subset_agent.py
-agents/generate_agents.py
-agents/evaluation.py
-search/__init__.py
-search/alpha_beta.py
 tests/test_agents.py
 tests/test_alpha_beta.py
 ```
 
 ### Must Not Edit
 
-`core/`, `variants/`, `features/`, `simulation/`, `tournament/`,
-`analysis/`, `reports/`, `ui/`, `main.py`
-
-### May Import From
-
-`core`, `variants`, `features`
+`simulation/`, `tournament/`, `analysis/`, `reports/`, `ui/`, `main.py`
 
 ### Prompt
 
 ```
-You are implementing Area 3 of EngineLab: feature-subset agents,
-evaluation, and alpha-beta search.
+You are implementing Area 1 of EngineLab: the complete chess ENGINE --
+variant rules, evaluation features, agent generation, and alpha-beta search.
 
 Read Instructions.MD and docs/interfaces.md completely before starting.
 
-Implement:
+PHASE 1 -- Atomic Chess:
+1. Atomic variant (variants/atomic.py):
+   - apply_atomic_move: explosion on capture (removes capturing piece,
+     captured piece, and all adjacent non-pawn pieces; pawns immune)
+   - generate_atomic_moves: filter captures that would explode own king
+   - Winner detection on king explosion
+   - Register "atomic" in VARIANT_DISPATCH
 
-1. FeatureSubsetAgent (frozen dataclass):
-   - name: str (e.g. "Agent_material__mobility")
-   - features: tuple[str, ...] (sorted alphabetically)
-   - weights: dict[str, float] (sum to 1.0)
+PHASE 2 -- Full Feature Library (10 features):
+All features: feature(board, color) -> float. Positive = good for color.
+Must not mutate board.
 
-2. generate_feature_subset_agents(feature_names):
-   - One agent per nonempty subset (2^n - 1 agents)
-   - Weights = 1.0 / len(subset)
-   - Names: features sorted alphabetically, joined by "__", prefixed "Agent_"
+Material:
+2. material: own material - opponent material (P=1, N=3, B=3, R=5, Q=9, K=0)
 
-3. evaluate(board, color, agent):
-   - Terminal: return WIN_SCORE (10000) or LOSS_SCORE (-10000)
-   - Otherwise: sum of weight * normalize(feature(board, color))
-   - normalize: clip to [-10, 10], divide by 10
+Positional:
+3. piece_position: piece-square table bonus (standard tables from chess
+   programming literature)
+4. center_control: pieces on/attacking d4,d5,e4,e5 (center pieces count 2x)
 
-4. contributions(board, color, agent):
-   - Per-feature weighted contribution dict
+Safety:
+5. king_safety: +1 per adjacent own pawn, -1 per open file near king,
+   -0.5 per enemy piece within Chebyshev distance 3
+6. enemy_king_danger: per own piece += 1/max(chebyshev_dist, 1);
+   per adjacent enemy king square attacked += 1
 
-5. AlphaBetaEngine:
-   - Negamax with alpha-beta pruning
-   - Depth-limited with leaf evaluation
-   - Move ordering: captures first
-   - choose_move(board) -> Move (must always return a legal move)
-   - Track nodes_searched and search_time_seconds
+Dynamic:
+7. mobility: own legal move count - opponent legal move count
+8. pawn_structure: -0.5 doubled, -0.5 isolated, +1.0 passed, +0.3 connected
+9. bishop_pair: +0.5 if 2+ bishops, else 0
+10. rook_activity: +0.5 open file, +0.25 semi-open, +0.5 on 7th rank
+11. capture_threats: sum capturable piece values; for atomic add 3x
+    adjacent explosions + 100x king explosion
 
-Verify:
-- 5 features -> exactly 31 agents, all names unique, weights sum to 1.0
-- Alpha-beta returns legal move at depth 1 and depth 2
-- pytest tests/test_agents.py tests/test_alpha_beta.py
+Registry: FEATURES dict, FEATURE_DESCRIPTIONS, get_feature_names(),
+get_feature_function(), get_feature_description()
+
+PHASE 3 -- Agent Generation & Evaluation:
+12. Dual-mode agent generation:
+    - Exhaustive if 2^n - 1 <= max_agents (default 100)
+    - Stratified sampling otherwise (all singles, all pairs, full set,
+      random larger subsets)
+    - Uniform weights: 1/len(subset)
+    - Names: sorted features joined by "__", prefixed "Agent_"
+13. evaluate(board, color, agent): weighted normalized features, WIN/LOSS
+    for terminals. normalize: clip [-10,10], divide by 10.
+14. contributions(board, color, agent): per-feature weighted contribution
+
+PHASE 4 -- Production Alpha-Beta:
+15. Negamax with alpha-beta pruning
+    - Move ordering: captures first (by victim value descending)
+    - choose_move(board) -> Move (must always return legal move)
+    - Track nodes_searched and search_time_seconds
+    - Variant-aware: use get_apply_move(variant), get_generate_legal_moves(variant)
+
+PHASE 5 -- Antichess (optional):
+16. apply_antichess_move: same as standard, winner = no pieces left
+17. generate_antichess_moves: if captures exist, return only captures
+
+Verify each phase before moving to the next:
+Phase 1: pytest tests/test_atomic.py
+Phase 2: pytest tests/test_features.py
+Phase 3: pytest tests/test_agents.py
+Phase 4: pytest tests/test_alpha_beta.py
+Phase 5: pytest tests/test_antichess.py
 ```
 
 ### Acceptance Criteria
 
-| ID  | Test                                               |
-|-----|----------------------------------------------------|
-| 3A  | 5 features -> 31 agents                           |
-| 3B  | All agent names unique                             |
-| 3C  | Weights sum to 1.0 (within float tolerance)        |
-| 3D  | evaluate returns numeric float                     |
-| 3E  | Alpha-beta returns legal move at depth 1 and 2     |
-| 3F  | test_agents.py and test_alpha_beta.py pass         |
+| ID  | Criterion                                                        |
+|-----|------------------------------------------------------------------|
+| 1A  | Atomic explosion removes correct pieces, pawns survive           |
+| 1B  | Self-preservation: captures exploding own king filtered          |
+| 1C  | 100 random atomic plies without crash                            |
+| 1D  | material at starting position returns 0.0                        |
+| 1E  | All 10 feature functions return floats                           |
+| 1F  | No feature mutates the board                                     |
+| 1G  | pawn_structure detects doubled and passed pawns                  |
+| 1H  | 5 features -> 31 agents, all names unique, weights sum to 1.0   |
+| 1I  | evaluate returns numeric float for non-terminal boards           |
+| 1J  | Alpha-beta returns legal move at depth 1 and depth 2            |
+| 1K  | (Optional) Antichess forced capture and win condition work       |
 
 ---
 
-## Developer 4: Game Simulation + Tournament Harness
+## Developer 2: Tournament, Analysis & CLI (HARNESS)
 
 ### Branch
 
-`area-4-simulation-tournament`
+`area-2-harness`
 
 ### Files Owned
 
 ```
-simulation/__init__.py
 simulation/game.py
 simulation/random_agent.py
-tournament/__init__.py
+simulation/__init__.py
 tournament/round_robin.py
 tournament/leaderboard.py
 tournament/results_io.py
-tests/test_tournament.py
-```
-
-### Must Not Edit
-
-`core/`, `variants/`, `features/`, `agents/`, `search/`,
-`analysis/`, `reports/`, `ui/`, `main.py`
-
-### May Import From
-
-`core`, `variants`, `agents`, `search`
-
-### Prompt
-
-```
-You are implementing Area 4 of EngineLab: game simulation, random
-agent, round-robin tournament, leaderboard, and result I/O.
-
-Read Instructions.MD and docs/interfaces.md completely before starting.
-
-Implement:
-
-1. RandomAgent: choose_move returns random legal atomic move
-
-2. GameResult dataclass:
-   white_agent, black_agent, winner ("w"/"b"/None), moves,
-   termination_reason, avg nodes/time per side
-
-3. play_game(white_agent, black_agent, variant, depth, max_moves, seed):
-   - White moves first
-   - Use AlphaBetaEngine for FeatureSubsetAgent
-   - Use RandomAgent directly
-   - Apply atomic moves
-   - Terminate on: king explosion, no legal moves, move cap
-   - Track nodes/time per side
-   - Seed random for reproducibility
-
-4. run_round_robin(agents, variant, depth, max_moves, seed):
-   - Every ordered pair (A as white, B as black), A != B
-   - N agents -> N*(N-1) games
-   - Show tqdm progress bar
-   - Per-game seed = tournament_seed + game_index
-
-5. save_results_json, load_results_json, save_results_csv
-
-6. compute_leaderboard(results, agents):
-   - win=1, draw=0.5, loss=0
-   - score_rate = (wins + 0.5*draws) / games_played
-   - Sort descending by score_rate
-
-Verify: pytest tests/test_tournament.py
-```
-
-### Acceptance Criteria
-
-| ID  | Test                                                   |
-|-----|--------------------------------------------------------|
-| 4A  | Random vs random game completes                        |
-| 4B  | FeatureSubsetAgent vs FeatureSubsetAgent game completes|
-| 4C  | 3 agents -> 6 games                                   |
-| 4D  | Leaderboard contains all agents, correct game counts   |
-| 4E  | JSON save/load roundtrip produces identical data       |
-| 4F  | test_tournament.py passes                              |
-
----
-
-## Developer 5: Analysis + Reporting + CLI
-
-### Branch
-
-`area-5-analysis-cli`
-
-### Files Owned
-
-```
-analysis/__init__.py
+tournament/__init__.py
 analysis/feature_marginals.py
 analysis/synergy.py
 analysis/interpretation.py
-reports/__init__.py
+analysis/__init__.py
 reports/markdown_report.py
+reports/__init__.py
 main.py
-ui/app.py (optional)
+ui/app.py
+tests/test_tournament.py
 tests/test_analysis.py
 ```
 
 ### Must Not Edit
 
-`core/`, `variants/`, `features/`, `agents/`, `search/`,
-`simulation/`, `tournament/`
+`core/`, `variants/`, `features/`, `agents/`, `search/`
 
 ### May Import From
 
-All modules.
+All modules (at integration time). During development, use mock_play_game()
+with zero ENGINE imports.
 
 ### Prompt
 
 ```
-You are implementing Area 5 of EngineLab: analysis, reporting, CLI,
-and optional Streamlit UI.
+You are implementing Area 2 of EngineLab: the complete HARNESS --
+tournament infrastructure, statistical analysis, reporting, and CLI.
 
 Read Instructions.MD and docs/interfaces.md completely before starting.
 
+CRITICAL: During development, use mock_play_game() that returns random
+GameResults. This lets you build and test your ENTIRE pipeline with zero
+imports from the ENGINE (Area 1). At integration time, swap the mock for
+the real play_game -- a one-line change.
+
 Implement:
 
-1. compute_feature_marginals(leaderboard, feature_names, top_k=10):
-   - avg_score_with: mean score_rate of agents containing feature
-   - avg_score_without: mean score_rate of agents excluding feature
-   - marginal: avg_score_with - avg_score_without
-   - top_k_frequency: fraction of top-k agents containing feature
+1. mock_play_game(white, black, **kwargs) -> GameResult:
+   Use random.Random(seed) for deterministic mock results.
 
-2. compute_pairwise_synergies(leaderboard, feature_names):
-   - synergy(a,b) = avg_with_both - avg_with_a - avg_with_b + overall_avg
-   - This is the standard ANOVA interaction term
+2. RandomAgent: choose_move returns random legal move for given variant.
 
-3. generate_interpretation(best_agent, marginals, synergies, variant):
-   - Natural-language paragraph about findings
+3. GameResult dataclass:
+   white_agent, black_agent, winner ("w"/"b"/None), moves,
+   termination_reason, avg nodes/time per side.
 
-4. generate_markdown_report(...):
-   - Sections: title, summary, variant, features, config, top-10
-     leaderboard, best subset, marginals, synergies, interpretation,
-     limitations
+4. play_game(white, black, variant, depth, max_moves, seed) -> GameResult:
+   White moves first. Use AlphaBetaEngine for FeatureSubsetAgent,
+   RandomAgent directly. Apply variant-dispatched moves. Terminate on
+   winner, no legal moves, or move cap. Seed with random.Random(seed).
 
-5. CLI with Typer (main.py):
-   - random-game: play random vs random
-   - match: play specific feature sets against each other
-   - tournament: run round-robin
-   - analyze: analyze existing results JSON
-   - full-pipeline: end-to-end pipeline
+5. run_round_robin(agents, variant, depth, max_moves, seed):
+   Every ordered pair (A as white, B as black). N*(N-1) games.
+   tqdm progress bar. Per-game seed = tournament_seed + game_index.
+   Optional multiprocessing with --workers flag.
 
-6. Optional: Streamlit UI in ui/app.py
+6. save_results_json, load_results_json, save_results_csv.
+
+7. compute_leaderboard(results, agents):
+   win=1, draw=0.5, loss=0. score_rate = (wins+0.5*draws)/games_played.
+   Sort descending by score_rate.
+
+8. compute_feature_marginals(leaderboard, feature_names, top_k=10):
+   avg_score_with, avg_score_without, marginal, top_k_frequency.
+
+9. compute_pairwise_synergies(leaderboard, feature_names):
+   synergy(a,b) = avg_with_both - avg_with_a - avg_with_b + overall_avg
+
+10. generate_interpretation(best_agent, marginals, synergies, variant):
+    Natural-language paragraph about findings.
+
+11. generate_markdown_report(...):
+    Sections: title, summary, variant, features, config, top-10
+    leaderboard, best subset, marginals, synergies, interpretation,
+    limitations.
+
+12. CLI with Typer (main.py):
+    - random-game: play random vs random
+    - match: play specific feature sets against each other
+    - tournament: run round-robin
+    - analyze: analyze existing results JSON
+    - full-pipeline: end-to-end pipeline
+
+13. Optional: Streamlit UI in ui/app.py
 
 Test your analysis functions on synthetic data first:
 - Create fake LeaderboardRow lists with known values
 - Verify marginals and synergies compute correctly
+- Use mock_play_game for tournament tests
 
 Verify:
-- pytest tests/test_analysis.py
+- pytest tests/test_tournament.py tests/test_analysis.py
 - python main.py --help
 ```
 
 ### Acceptance Criteria
 
-| ID  | Test                                                   |
-|-----|--------------------------------------------------------|
-| 5A  | Marginals correct on synthetic data                    |
-| 5B  | Synergies correct on synthetic data                    |
-| 5C  | Markdown report generates without error                |
-| 5D  | python main.py --help shows all commands               |
-| 5E  | full-pipeline orchestrates all components              |
-| 5F  | test_analysis.py passes                                |
+| ID  | Criterion                                                        |
+|-----|------------------------------------------------------------------|
+| 2A  | Random vs random game completes (with mock or real play_game)    |
+| 2B  | FeatureSubsetAgent vs FeatureSubsetAgent game completes          |
+| 2C  | 3 agents produce 6 ordered games                                 |
+| 2D  | Leaderboard contains all agents with correct game counts         |
+| 2E  | Results save to JSON and load back identically                   |
+| 2F  | Feature marginals correct on synthetic leaderboard data          |
+| 2G  | Synergy analysis correct on synthetic leaderboard data           |
+| 2H  | Markdown report generates without error                          |
+| 2I  | python main.py --help shows all commands                         |
+| 2J  | full-pipeline calls all components end-to-end                    |
+| 2K  | pytest tests/test_tournament.py tests/test_analysis.py passes    |

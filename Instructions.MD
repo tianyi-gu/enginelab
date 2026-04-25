@@ -5,7 +5,7 @@
 1. [Executive Summary](#1-executive-summary)
 2. [Core Mechanism](#2-core-mechanism)
 3. [Technical Conventions & Standards](#3-technical-conventions--standards)
-4. [Atomic Chess Rules](#4-atomic-chess-rules)
+4. [Chess Variant System](#4-chess-variant-system)
 5. [Technology Stack](#5-technology-stack)
 6. [Repository Structure](#6-repository-structure)
 7. [Shared Interface Specification](#7-shared-interface-specification)
@@ -260,47 +260,120 @@ VARIANT_DISPATCH = {
 This keeps the variant system simple (no class hierarchy) while supporting
 clean dispatch everywhere via `variant: str` parameters.
 
-### 4.3 Standard Movement (Shared Across All Variants)
+### 4.3 Complete Movement Rules
 
-All variants share the same piece movement rules. The MVP scope includes:
+The foundation implements **all standard chess rules**. This is not a
+simplified subset -- the engine must handle every legal chess position
+correctly. Getting this right is the foundation that everything else
+depends on.
 
-**Included:**
-- Pawn single push, double push from starting rank, diagonal capture
-- Knight L-shaped movement
-- Bishop diagonal sliding
-- Rook orthogonal sliding
-- Queen diagonal + orthogonal sliding
-- King single-step in all 8 directions
-- Pawn promotion to queen when reaching the last rank
+#### Piece Movement
 
-**Excluded from MVP (not needed):**
-- Castling
-- En passant
-- Underpromotion (promote to rook/bishop/knight)
+- **Pawn:** Single push, double push from starting rank, diagonal capture,
+  en passant capture, promotion to queen/rook/bishop/knight.
+- **Knight:** 8 possible L-shaped jumps.
+- **Bishop:** Slide diagonally until blocked or capture.
+- **Rook:** Slide orthogonally until blocked or capture.
+- **Queen:** Combine bishop + rook movement.
+- **King:** Single step in all 8 directions, plus castling.
+
+#### Castling
+
+Both kingside (O-O) and queenside (O-O-O) castling must be implemented.
+
+Requirements for a legal castle:
+1. King and the target rook have not previously moved.
+2. No pieces between king and rook.
+3. King is not currently in check.
+4. King does not pass through a square attacked by an opponent piece.
+5. King does not end on a square attacked by an opponent piece.
+
+Board state must track castling rights:
+
+```python
+castling_rights: dict[str, bool]
+# {"K": True, "Q": True, "k": True, "q": True}
+# K/Q = white kingside/queenside, k/q = black kingside/queenside
+```
+
+Castling rights are lost when:
+- The king moves (lose both sides for that color).
+- A rook moves or is captured (lose that specific side).
+
+#### En Passant
+
+When a pawn advances two squares from its starting rank, the opponent may
+capture it "in passing" on the very next move as if it had moved only one
+square.
+
+Board state must track the en passant target square:
+
+```python
+en_passant_square: Square | None
+# Set to the square the capturing pawn would land on.
+# Reset to None after each move unless a new double pawn push occurs.
+```
+
+#### Promotion
+
+When a pawn reaches the last rank, it must promote. All four options must
+be supported: queen, rook, bishop, knight. The `Move.promotion` field
+specifies the target piece type (e.g., `"Q"`, `"R"`, `"B"`, `"N"` for
+white; `"q"`, `"r"`, `"b"`, `"n"` for black).
+
+#### Check and Legal Move Filtering
+
+Move generation uses a two-step process:
+
+1. Generate pseudo-legal moves (all moves ignoring check).
+2. Filter: for each pseudo-legal move, apply it to a copy of the board.
+   If the moving side's king is in check after the move, discard it.
+
+This requires a helper:
+
+```python
+def is_square_attacked(board: Board, square: Square, by_color: str) -> bool:
+    """Return True if any piece of by_color attacks the given square."""
+
+def is_in_check(board: Board, color: str) -> bool:
+    """Return True if color's king is attacked."""
+```
+
+#### Terminal Conditions (Standard Chess)
+
+- **Checkmate:** Side to move is in check and has no legal moves. Opponent
+  wins.
+- **Stalemate:** Side to move is NOT in check but has no legal moves. Draw.
+- **Move cap:** `board.move_count >= max_moves`. Draw.
+
+**Not implemented** (acceptable simplification):
 - Threefold repetition
 - Fifty-move rule
+- Insufficient material
 
 ### 4.4 Standard Chess Variant (Phase 1 -- Build First)
 
-Standard chess is the simplest variant and the foundation. Since the MVP
-does not enforce check, the win condition is king capture.
+Standard chess is the foundation. It uses the complete movement rules above.
 
 **Move application (`variants/standard.py`):**
 - Move piece from start to end square.
 - If destination has an enemy piece, remove it (standard capture).
-- Handle pawn promotion to queen at the last rank.
+- Handle en passant captures (remove the captured pawn from its actual square).
+- Handle castling (move king + rook together, update castling rights).
+- Handle pawn promotion.
+- Update castling rights if king or rook moved or rook captured.
+- Set `en_passant_square` if pawn double-pushed, else clear it.
 - Toggle `side_to_move`, increment `move_count`.
-- If a king was captured, set `board.winner` to the capturing side.
+- Check for checkmate/stalemate after the move.
 
 **Legal move generation:**
-- All pseudo-legal moves from `generate_moves(board)`.
-- No additional filtering needed for standard chess (no check enforcement
-  in MVP).
+- Pseudo-legal moves + check filtering (Section 4.3).
+- Includes castling and en passant when legal.
 
 **Terminal conditions:**
-- King captured (`find_king(color)` returns `None`) -- opponent wins.
-- No legal moves -- side to move loses.
-- Move cap reached -- draw.
+- Checkmate -- opponent wins.
+- Stalemate -- draw.
+- Move cap -- draw.
 
 ### 4.5 Atomic Chess Variant (Phase 2)
 
@@ -387,21 +460,32 @@ The feature signature remains `(board, color) -> float` but the function
 internally checks the variant. See Section 8 (Area 2) for implementation
 details.
 
-### 4.8 Check Handling (MVP Simplification)
+### 4.8 Check Legality Enforcement
 
-The MVP does **not** enforce the obligation to escape check in any variant.
-A player whose king is in check may play any legal move, including one that
-ignores the check. This simplification may produce some unrealistic positions
-but does not break the system because:
+All variants enforce check legality unless otherwise noted:
 
-- For Atomic: the self-preservation rule (4.5) prevents the worst illegal
-  states.
-- If a king remains in check, the opponent can capture it next move (all
-  variants).
-- The evaluation features (king_danger, king_safety) will still correctly
-  assess dangerous positions, so engines with those features will naturally
-  avoid leaving their king in danger.
-- For Antichess: the king has no special status, so check is irrelevant.
+- **Standard Chess:** A move is legal only if it does not leave the moving
+  side's king in check. Use the two-step approach: generate pseudo-legal
+  moves, then filter out any that leave the king in check (see Section 4.3).
+- **Atomic Chess:** The self-preservation rule (Section 4.5) applies in
+  addition to standard check filtering. A move that would explode the
+  moving side's own king is always illegal.
+- **Antichess:** The king has no special status. Check is not enforced.
+  All pseudo-legal moves are legal. If captures exist, only capture moves
+  are legal (forced capture rule).
+
+Helper functions required (see Section 7.4):
+
+```python
+def is_square_attacked(board: Board, square: Square, by_color: str) -> bool:
+    """True if any piece of by_color attacks the given square."""
+
+def is_in_check(board: Board, color: str) -> bool:
+    """True if color's king is under attack."""
+
+def generate_legal_moves(board: Board) -> list[Move]:
+    """Pseudo-legal moves filtered by check legality."""
+```
 
 ---
 
@@ -555,29 +639,30 @@ Square = tuple[int, int]  # (row, col), row 0 = rank 1, col 0 = file a
 ```python
 # core/board.py
 class Board:
-    grid: list[list[str | None]]   # 8x8, FEN piece chars or None
-    side_to_move: str              # "w" or "b"
-    winner: str | None             # "w", "b", or None
-    move_count: int                # incremented after each ply
+    grid: list[list[str | None]]       # 8x8, FEN piece chars or None
+    side_to_move: str                  # "w" or "b"
+    winner: str | None                 # "w", "b", or None (draw uses "draw")
+    move_count: int                    # incremented after each ply
+    castling_rights: dict[str, bool]   # {"K": True, "Q": True, "k": True, "q": True}
+    en_passant_square: Square | None   # target square for en passant, or None
 
     @staticmethod
     def starting_position() -> "Board": ...
+        # All castling rights True, en_passant_square None.
 
     def copy(self) -> "Board": ...
-        # Must return a fully independent deep copy.
+        # Must deep-copy grid, castling_rights dict, and all fields.
 
     def get_piece(self, square: Square) -> str | None: ...
 
     def set_piece(self, square: Square, piece: str | None) -> None: ...
 
     def find_king(self, color: str) -> Square | None: ...
-        # Returns (row, col) of the king, or None if no king found.
 
     def is_terminal(self) -> bool: ...
-        # True if winner is set or no legal moves exist.
+        # True if winner is set.
 
     def print_board(self) -> None: ...
-        # Display with rank 8 at top, rank 1 at bottom, file labels.
 ```
 
 ### 7.3 Move
@@ -613,10 +698,27 @@ def generate_moves_for_color(board: Board, color: str) -> list[Move]:
     ...
 ```
 
+```python
+# Check detection and legal move generation
+
+def is_square_attacked(board: Board, square: Square, by_color: str) -> bool:
+    """True if any piece of by_color attacks the given square."""
+
+def is_in_check(board: Board, color: str) -> bool:
+    """True if color's king is under attack by the opponent."""
+
+def generate_legal_moves(board: Board) -> list[Move]:
+    """Pseudo-legal moves filtered to remove those that leave the
+    moving side's king in check."""
+```
+
 Notes:
-- These produce pseudo-legal moves. For Atomic Chess, the variant layer
-  must filter out captures that would explode the moving side's own king
-  (see Section 4.3).
+- `generate_moves` and `generate_moves_for_color` produce pseudo-legal moves
+  (including castling and en passant). They do NOT filter for check legality.
+- `generate_legal_moves` applies each pseudo-legal move, checks if the
+  moving side's king is attacked, and filters accordingly.
+- For Atomic Chess, the variant layer adds additional filtering (captures
+  that would explode the moving side's own king -- see Section 4.5).
 - **Move ordering must be deterministic** (see Section 12). Iterate pieces
   by row 0-7, col 0-7. For each piece, produce destination squares in a
   consistent order. This is required for alpha-beta reproducibility.
@@ -962,464 +1064,296 @@ def generate_markdown_report(
 
 ## 8. Development Area Specifications
 
-### Area 1: Core Chess State + Variant Rules
+EngineLab is split into a **shared foundation** (built first, committed to
+`main`) and **two parallel development areas** that can be developed
+simultaneously by two developers using AI coding agents.
+
+### Foundation: Working Chess Engine (Built First)
+
+**Goal:** Deliver a minimal but complete, runnable chess system on `main`
+before any parallel work begins. Both developers branch from this.
+
+**What it includes:**
+
+1. Complete `Board` class with all fields (including `castling_rights`,
+   `en_passant_square`).
+2. Complete `Move` dataclass.
+3. Full pseudo-legal move generation for all piece types (including castling,
+   en passant, promotion to all pieces).
+4. Check detection helpers: `is_square_attacked`, `is_in_check`.
+5. Legal move generation (pseudo-legal filtered by check legality).
+6. Standard chess variant (`variants/standard.py`): apply move, generate
+   legal moves, winner detection on checkmate/stalemate.
+7. Variant dispatch (`variants/base.py`) with `"standard"` registered.
+8. A material-only evaluation function and trivial alpha-beta at depth 1.
+9. A minimal `play_game()` function that can run standard chess games.
+10. Stub files for all remaining interfaces (raise `NotImplementedError`).
+
+**Files:**
+
+```
+core/types.py, core/board.py, core/move.py, core/coordinates.py
+core/move_generation.py, core/apply_move.py, core/__init__.py
+variants/base.py, variants/standard.py, variants/__init__.py
+agents/feature_subset_agent.py, agents/evaluation.py, agents/__init__.py
+search/alpha_beta.py, search/__init__.py
+simulation/game.py, simulation/__init__.py
++ all __init__.py files and stubs for remaining modules
+```
+
+**Foundation acceptance test:**
+
+```bash
+# This must work before branching:
+python -c "
+from simulation.game import play_game
+from agents.feature_subset_agent import FeatureSubsetAgent
+a = FeatureSubsetAgent('Agent_material', ('material',), {'material': 1.0})
+result = play_game(a, a, variant='standard', depth=1, max_moves=40, seed=42)
+print(f'Game completed: {result.moves} moves, winner={result.winner}')
+"
+```
+
+**Checkpoints:**
+
+| ID  | Criterion                                                        |
+|-----|------------------------------------------------------------------|
+| 0A  | Board starting position correct, `copy()` is deep                |
+| 0B  | Starting position generates exactly 20 white pseudo-legal moves  |
+| 0C  | Castling generates correctly (kingside and queenside)            |
+| 0D  | En passant capture works                                         |
+| 0E  | Promotion to all 4 piece types works                             |
+| 0F  | Legal move filter removes moves that leave king in check         |
+| 0G  | Standard game completes (material-only eval, depth 1)            |
+| 0H  | Variant dispatch resolves `"standard"` correctly                 |
+
+---
+
+### Area 1: Variants, Features & Search (Developer 1)
 
 **Owner:** Developer 1
 
-**Goal:** Build the board representation, move representation, pseudo-legal
-move generation, standard chess variant, variant dispatch, and Atomic Chess
-rule application. **Build standard chess first** (Phase 1), then add Atomic
-(Phase 2), then optionally Antichess (Phase 3).
+**Branch:** `area-1-engine`
+
+**Goal:** Build the complete chess engine: all variant rules, the full
+10-feature evaluation library, feature-subset agent generation, and
+production alpha-beta search. This is the ENGINE workstream.
 
 **Files owned:**
 
 ```
-core/types.py
-core/board.py
-core/move.py
-core/coordinates.py
-core/move_generation.py
-core/apply_move.py
-core/__init__.py
-variants/base.py
-variants/standard.py
+core/move_generation.py        # extend for variant-specific filtering
+core/apply_move.py             # extend for variant-specific application
 variants/atomic.py
-variants/antichess.py          # optional Phase 3
-variants/__init__.py
+variants/antichess.py
+variants/standard.py           # extend if needed
+variants/base.py               # register new variants
+features/registry.py
+features/material.py
+features/piece_position.py
+features/center_control.py
+features/king_safety.py
+features/king_danger.py
+features/mobility.py
+features/pawn_structure.py
+features/bishop_pair.py
+features/rook_activity.py
+features/capture_threats.py
+features/__init__.py
+agents/feature_subset_agent.py # extend if needed
+agents/generate_agents.py
+agents/evaluation.py           # full weighted evaluation
+agents/__init__.py
+search/alpha_beta.py           # production depth search
+search/__init__.py
 tests/test_board.py
 tests/test_move_generation.py
 tests/test_standard.py
 tests/test_atomic.py
-tests/test_antichess.py        # optional Phase 3
-```
-
-**Must not edit:** `features/`, `agents/`, `search/`, `tournament/`,
-`analysis/`, `reports/`, `ui/`
-
-#### Detailed Responsibilities
-
-**Board (`core/board.py`):**
-
-- `__init__`: Initialize with 8x8 grid, `side_to_move="w"`, `winner=None`,
-  `move_count=0`.
-- `starting_position()`: Return a board with standard chess starting position
-  using the coordinate system defined in Section 3.3.
-- `copy()`: Deep copy (see Section 3.5).
-- `get_piece(square)`, `set_piece(square, piece)`: Grid access.
-- `find_king(color)`: Scan grid for `"K"` (if color `"w"`) or `"k"` (if
-  color `"b"`). Return `(row, col)` or `None`.
-- `is_terminal()`: Return `True` if `winner is not None`.
-- `print_board()`: Print with rank 8 at top, file labels at bottom.
-
-**Move (`core/move.py`):**
-
-- Frozen dataclass with `start`, `end`, `promotion`.
-- `to_uci()`: Format as UCI string, e.g., `"e2e4"`, `"a7a8q"`.
-
-**Move generation (`core/move_generation.py`):**
-
-- Generate pseudo-legal moves for all piece types.
-- **Pawn:** Single push (one square forward), double push from starting rank
-  (row 1 for white, row 6 for black), diagonal capture. Promotion to queen
-  when reaching last rank (row 7 for white, row 0 for black).
-- **Knight:** 8 possible L-shaped jumps.
-- **Bishop:** Slide diagonally until blocked or capture.
-- **Rook:** Slide orthogonally until blocked or capture.
-- **Queen:** Combine bishop + rook movement.
-- **King:** Single step in all 8 directions.
-- Bounds checking: all destination squares must be in [0,7] x [0,7].
-- Cannot capture own pieces.
-- `generate_moves(board)`: Generate for `board.side_to_move`.
-- `generate_moves_for_color(board, color)`: Generate for specified color
-  regardless of turn.
-
-**Atomic variant (`variants/atomic.py`):**
-
-- `apply_atomic_move(board, move)`: Copy board, apply move, handle explosion
-  if capture, set winner if king destroyed, toggle `side_to_move`, increment
-  `move_count`, return new board.
-- `generate_atomic_moves(board)`: Call `generate_moves(board)`, filter out
-  captures where the moving side's king is adjacent (Chebyshev distance <= 1)
-  to the capture square.
-
-#### Checkpoints
-
-**Phase 1 (Standard Chess -- build first):**
-
-| ID  | Criterion                                                        |
-|-----|------------------------------------------------------------------|
-| 1A  | `pytest tests/test_board.py` passes                              |
-| 1B  | Starting position generates exactly 20 white pseudo-legal moves  |
-| 1C  | Standard move application works (captures, promotion)            |
-| 1D  | 100 random standard chess plies without crash                    |
-| 1E  | Variant dispatch resolves `"standard"` correctly                 |
-
-**Phase 2 (Atomic Chess):**
-
-| ID  | Criterion                                                        |
-|-----|------------------------------------------------------------------|
-| 1F  | Atomic explosion tests pass (pieces removed, pawns survive)      |
-| 1G  | Self-preservation: captures that would explode own king filtered |
-| 1H  | 100 random atomic plies without crash                            |
-
-**Phase 3 (Antichess -- optional):**
-
-| ID  | Criterion                                                        |
-|-----|------------------------------------------------------------------|
-| 1I  | Forced capture rule works (only captures returned when available)|
-| 1J  | Win condition: player with no pieces left wins                   |
-
----
-
-### Area 2: Feature Library + Feature Registry
-
-**Owner:** Developer 2
-
-**Goal:** Implement all interpretable evaluation features and expose them
-through a central registry.
-
-**Files owned:**
-
-```
-features/registry.py
-features/material.py
-features/mobility.py
-features/king_danger.py
-features/king_safety.py
-features/capture_threats.py
-features/__init__.py
+tests/test_antichess.py
 tests/test_features.py
-```
-
-**Must not edit:** `core/`, `variants/`, `agents/`, `search/`, `tournament/`,
-`analysis/`, `reports/`, `ui/`
-
-**May import from:** `core`, `variants`
-
-#### Feature Specifications
-
-**1. `material(board, color) -> float`**
-
-Difference in material value:
-
-```
-own_material - opponent_material
-```
-
-Piece values:
-
-```python
-PIECE_VALUES = {"P": 1.0, "N": 3.0, "B": 3.0, "R": 5.0, "Q": 9.0, "K": 0.0}
-```
-
-Use `piece_type(piece).upper()` to look up values regardless of color.
-
-**2. `mobility(board, color) -> float`**
-
-Difference in pseudo-legal move count:
-
-```
-len(generate_moves_for_color(board, color)) - len(generate_moves_for_color(board, opponent))
-```
-
-**3. `enemy_king_danger(board, color) -> float`**
-
-Measures pressure near the opponent's king. For each own piece:
-
-```
-score += 1.0 / max(chebyshev_distance(piece_square, enemy_king_square), 1)
-```
-
-Additionally, for each square adjacent to the enemy king that is attacked by
-an own piece:
-
-```
-score += 1.0
-```
-
-Chebyshev distance: `max(abs(r1 - r2), abs(c1 - c2))`
-
-If the enemy king is not on the board (already exploded), return a large
-positive value (e.g., 10.0).
-
-**4. `own_king_safety(board, color) -> float`**
-
-Penalty for opponent pressure near own king. Computed as the negative of
-the danger to own king:
-
-```
-own_king_safety(board, color) = -enemy_king_danger(board, opponent)
-```
-
-where the danger calculation reuses the same logic but from the opponent's
-perspective. If own king is not on the board, return a large negative value
-(e.g., -10.0).
-
-**5. `capture_threats(board, color) -> float`**
-
-For each legal capture available to `color`:
-
-```
-score += captured_piece_value
-score += 3.0 * (number of adjacent enemy non-pawn pieces that would explode)
-score += 100.0 if enemy king would be destroyed by the explosion
-```
-
-This feature is Atomic-specific and evaluates immediate tactical threats.
-
-#### Registry (`features/registry.py`)
-
-```python
-FEATURES: dict[str, Callable[[Board, str], float]] = {
-    "material": material,
-    "mobility": mobility,
-    "enemy_king_danger": enemy_king_danger,
-    "own_king_safety": own_king_safety,
-    "capture_threats": capture_threats,
-}
-
-FEATURE_DESCRIPTIONS: dict[str, str] = {
-    "material": "Ordinary piece-value advantage.",
-    "mobility": "Difference in pseudo-legal move availability.",
-    "enemy_king_danger": "Pressure near the opponent king.",
-    "own_king_safety": "Penalty for opponent explosion pressure near own king.",
-    "capture_threats": "Immediate tactical capture and explosion opportunities.",
-}
-
-def get_feature_names() -> list[str]: ...
-def get_feature_function(name: str) -> Callable[[Board, str], float]: ...
-def get_feature_description(name: str) -> str: ...
-```
-
-#### Invariants
-
-- Every feature returns a `float`.
-- Positive values are good for `color`.
-- No feature mutates the board.
-- `material(starting_position, "w")` returns `0.0`.
-- All features handle missing kings gracefully.
-
-#### Checkpoints
-
-| ID  | Criterion                                                    |
-|-----|--------------------------------------------------------------|
-| 2A  | `material` at starting position returns 0.0 for both colors |
-| 2B  | All 5 feature functions return floats                        |
-| 2C  | No feature mutates the board (verify with before/after copy) |
-| 2D  | `pytest tests/test_features.py` passes                       |
-
----
-
-### Area 3: Agents + Evaluation + Alpha-Beta Search
-
-**Owner:** Developer 3
-
-**Goal:** Generate feature-subset agents, evaluate positions using weighted
-feature combinations, and implement alpha-beta search.
-
-**Files owned:**
-
-```
-agents/feature_subset_agent.py
-agents/generate_agents.py
-agents/evaluation.py
-agents/__init__.py
-search/alpha_beta.py
-search/__init__.py
 tests/test_agents.py
 tests/test_alpha_beta.py
 ```
 
-**Must not edit:** `core/`, `variants/`, `features/`, `simulation/`,
-`tournament/`, `analysis/`, `reports/`, `ui/`
-
-**May import from:** `core`, `variants`, `features`
+**Must not edit:** `simulation/`, `tournament/`, `analysis/`, `reports/`,
+`ui/`, `main.py`
 
 #### Detailed Responsibilities
 
+##### Phase 1: Atomic Chess Variant
+
+**Atomic variant (`variants/atomic.py`):**
+
+- `apply_atomic_move(board, move)`: Copy board, apply move, handle explosion
+  if capture (remove capturing piece, captured piece, and all adjacent
+  non-pawn pieces; pawns are immune to explosion), set winner if king
+  destroyed, toggle `side_to_move`, increment `move_count`.
+- `generate_atomic_moves(board)`: Call `generate_moves(board)`, filter out
+  captures where the moving side's king is adjacent (Chebyshev distance <= 1)
+  to the capture square (self-preservation rule).
+- Register `"atomic"` in `VARIANT_DISPATCH`.
+
+##### Phase 2: Full Feature Library
+
+Implement all 10 features. Each feature has signature
+`feature(board: Board, color: str) -> float` where positive = good for
+`color`. No feature may mutate the board.
+
+**Material features:**
+
+1. **`material`**: Raw material difference using standard piece values
+   (P=1, N=3, B=3, R=5, Q=9, K=0).
+
+**Positional features:**
+
+2. **`piece_position`**: Piece-square table bonus. Sum table values for own
+   pieces minus opponent pieces. Use standard tables from chess programming
+   literature (pawns prefer center/advanced ranks, knights prefer center,
+   bishops prefer long diagonals, rooks prefer open files/7th rank, king
+   prefers corners in middlegame).
+
+3. **`center_control`**: Count own pieces/pawns on or attacking center
+   squares (d4, d5, e4, e5) minus opponent's. Pieces on center squares
+   count double.
+
+**Safety features:**
+
+4. **`king_safety`**: Own king defensive position. +1 per adjacent own pawn
+   (shield), -1 per open/semi-open file adjacent to king, -0.5 per enemy
+   piece within Chebyshev distance 3.
+
+5. **`enemy_king_danger`**: Pressure on opponent's king. Per own piece:
+   `+= 1.0 / max(chebyshev_distance, 1)`. Per adjacent enemy king square
+   attacked: `+= 1.0`.
+
+**Dynamic features:**
+
+6. **`mobility`**: Legal move count difference (own - opponent).
+
+7. **`pawn_structure`**: -0.5 per doubled pawn, -0.5 per isolated pawn,
+   +1.0 per passed pawn, +0.3 per connected pawn.
+
+8. **`bishop_pair`**: +0.5 if side has 2+ bishops, else 0.
+
+9. **`rook_activity`**: +0.5 per rook on open file, +0.25 per rook on
+   semi-open file, +0.5 per rook on 7th rank.
+
+10. **`capture_threats`**: Value of available captures. Variant-aware
+    (standard: sum of capturable piece values; atomic: + 3x adjacent
+    explosions + 100x king explosion).
+
+**Registry (`features/registry.py`):** Map all 10 feature names to functions
+and descriptions via `FEATURES`, `FEATURE_DESCRIPTIONS`, `get_feature_names()`,
+`get_feature_function()`, `get_feature_description()`.
+
+##### Phase 3: Agent Generation & Evaluation
+
 **Agent generation (`agents/generate_agents.py`):**
 
-- Generate one `FeatureSubsetAgent` for every nonempty subset of the given
-  feature names.
-- For `n` features, this produces `2^n - 1` agents.
-- Weights are uniform within each agent: `weight = 1.0 / len(subset)`.
-- Agent names: features sorted alphabetically, joined with `__`, prefixed
-  with `Agent_`.
-- Example for subset `{"mobility", "material"}`:
-  ```python
-  FeatureSubsetAgent(
-      name="Agent_material__mobility",
-      features=("material", "mobility"),
-      weights={"material": 0.5, "mobility": 0.5},
-  )
-  ```
+Dual-mode generation:
+
+- **Exhaustive (n <= 6):** One agent per nonempty subset. `2^n - 1` agents.
+- **Stratified sampling (n > 6):** All singles, all pairs, full set,
+  plus random subsets of sizes 3 to n-1 up to `max_agents` (default 100).
+
+Both modes use uniform weights: `weight = 1.0 / len(subset)`.
+Agent names: features sorted alphabetically, joined with `__`, prefixed
+with `Agent_`.
+
+```python
+def generate_feature_subset_agents(
+    feature_names: list[str],
+    max_agents: int = 100,
+    seed: int = 42,
+) -> list[FeatureSubsetAgent]:
+    """Exhaustive if 2^n - 1 <= max_agents, else stratified sample."""
+```
 
 **Evaluation (`agents/evaluation.py`):**
 
-- `evaluate(board, color, agent)`: Sum weighted, normalized feature values.
-  Return `WIN_SCORE` (+10000) or `LOSS_SCORE` (-10000) for terminal positions.
-- Feature normalization:
-  ```python
-  def normalize_feature_value(x: float) -> float:
-      return max(-10.0, min(10.0, x)) / 10.0
-  ```
-  This clips features to [-10, +10] and scales to [-1, +1], preventing any
-  single feature from dominating. After normalization, the weighted sum
-  produces values in [-1, +1] for non-terminal positions.
-- `contributions(board, color, agent)`: Return the per-feature weighted
-  contribution (for debugging and analysis).
+- `evaluate(board, color, agent)`: Weighted sum of normalized features.
+  Terminal positions return `WIN_SCORE` (+10000) or `LOSS_SCORE` (-10000).
+- Normalization: `clip(x, -10, 10) / 10`.
+- `contributions(board, color, agent)`: Per-feature weighted contribution.
 
-**Alpha-beta search (`search/alpha_beta.py`):**
+##### Phase 4: Production Alpha-Beta Search
 
-- Negamax with alpha-beta pruning is the recommended implementation:
-  ```
-  negamax(board, depth, alpha, beta, color):
-      if depth == 0 or board.is_terminal():
-          return evaluate(board, color, agent)
-      moves = generate_atomic_moves(board)
-      if not moves:
-          return LOSS_SCORE  # no legal moves = loss
-      order moves (captures first)
-      for move in moves:
-          child = apply_atomic_move(board, move)
-          score = -negamax(child, depth-1, -beta, -alpha, opponent)
-          alpha = max(alpha, score)
-          if alpha >= beta:
-              break  # beta cutoff
-      return alpha
-  ```
-- `choose_move`: Run the search at the configured depth and return the move
-  with the best score.
-- Track `nodes_searched` (number of positions evaluated) and
-  `search_time_seconds` for performance monitoring.
-- **Must always return a legal move if one exists.** If the search somehow
-  fails to find a move, fall back to the first legal move.
+**Alpha-beta (`search/alpha_beta.py`):**
+
+- Negamax with alpha-beta pruning.
+- Move ordering: captures first (sorted by victim value descending).
+- `choose_move(board) -> Move`: Must always return a legal move.
+- Track `nodes_searched` and `search_time_seconds`.
+- Variant-aware: use `get_apply_move(variant)` and
+  `get_generate_legal_moves(variant)`.
+
+##### Phase 5: Antichess (Optional)
+
+- `apply_antichess_move`: Same as standard. Winner = player with no pieces.
+- `generate_antichess_moves`: If captures exist, return only captures.
+- Register `"antichess"` in `VARIANT_DISPATCH`.
 
 #### Checkpoints
 
-| ID  | Criterion                                                  |
-|-----|------------------------------------------------------------|
-| 3A  | 5 features generate exactly 31 agents                     |
-| 3B  | All 31 agent names are unique                              |
-| 3C  | Weights sum to 1.0 for every agent (within float epsilon)  |
-| 3D  | `evaluate` returns a numeric float for non-terminal boards |
-| 3E  | Alpha-beta returns a legal move at depth 1 and depth 2     |
-| 3F  | `pytest tests/test_agents.py tests/test_alpha_beta.py`     |
+**Atomic Chess:**
+
+| ID  | Criterion                                                        |
+|-----|------------------------------------------------------------------|
+| 1A  | Atomic explosion removes correct pieces, pawns survive           |
+| 1B  | Self-preservation: captures that would explode own king filtered |
+| 1C  | 100 random atomic plies without crash                            |
+
+**Features:**
+
+| ID  | Criterion                                                        |
+|-----|------------------------------------------------------------------|
+| 1D  | `material` at starting position returns 0.0 for both colors      |
+| 1E  | All 10 feature functions return floats                            |
+| 1F  | No feature mutates the board (verify with before/after copy)     |
+| 1G  | `pawn_structure` detects doubled and passed pawns correctly      |
+
+**Agents & Search:**
+
+| ID  | Criterion                                                        |
+|-----|------------------------------------------------------------------|
+| 1H  | 5 features generate exactly 31 agents, all names unique          |
+| 1I  | Weights sum to 1.0 for every agent (within float epsilon)        |
+| 1J  | `evaluate` returns a numeric float for non-terminal boards       |
+| 1K  | Alpha-beta returns a legal move at depth 1 and depth 2           |
+
+**Antichess (optional):**
+
+| ID  | Criterion                                                        |
+|-----|------------------------------------------------------------------|
+| 1L  | Forced capture rule works (only captures returned when available)|
+| 1M  | Win condition: player with no pieces left wins                   |
 
 ---
 
-### Area 4: Game Simulation + Tournament Harness
+### Area 2: Tournament, Analysis & CLI (Developer 2)
 
-**Owner:** Developer 4
+**Owner:** Developer 2
 
-**Goal:** Build game simulation, random baseline agent, round-robin tournament,
-result storage, and leaderboard computation.
+**Branch:** `area-2-harness`
+
+**Goal:** Build the tournament infrastructure, statistical analysis,
+reporting, and CLI. This is the HARNESS workstream. During development,
+use `mock_play_game()` with random outcomes so that all tournament,
+analysis, and reporting code can be built and tested with **zero imports
+from the ENGINE** (Area 1). At integration time, swap the mock for the
+real `play_game` -- a one-line change.
 
 **Files owned:**
 
 ```
-simulation/game.py
+simulation/game.py             # play_game + mock_play_game
 simulation/random_agent.py
 simulation/__init__.py
 tournament/round_robin.py
 tournament/leaderboard.py
 tournament/results_io.py
 tournament/__init__.py
-tests/test_tournament.py
-```
-
-**Must not edit:** `core/`, `variants/`, `features/`, `agents/`, `search/`,
-`analysis/`, `reports/`, `ui/`
-
-**May import from:** `core`, `variants`, `agents`, `search`
-
-#### Detailed Responsibilities
-
-**Random agent (`simulation/random_agent.py`):**
-
-```python
-class RandomAgent:
-    name: str = "RandomAgent"
-
-    def choose_move(self, board: Board, variant: str = "standard") -> Move:
-        generate_legal = get_generate_legal_moves(variant)
-        moves = generate_legal(board)
-        return random.choice(moves)
-```
-
-**Game simulation (`simulation/game.py`):**
-
-- Initialize board from `Board.starting_position()`.
-- Alternate turns: white moves first.
-- For `FeatureSubsetAgent`: create `AlphaBetaEngine(agent, depth)` and call
-  `engine.choose_move(board)`.
-- For `RandomAgent`: call `agent.choose_move(board)`.
-- Apply moves with `get_apply_move(variant)(board, move)`.
-- Terminate on: winner set (king captured/exploded/no pieces), no legal
-  moves, or move cap.
-- Track per-side average nodes searched and average time per move.
-- Use the `seed` parameter to seed `random` for reproducibility.
-
-**Round-robin (`tournament/round_robin.py`):**
-
-- For every ordered pair `(A, B)` where `A != B`, play one game with `A` as
-  white and `B` as black.
-- For N agents: `N * (N - 1)` total games.
-- Display progress with `tqdm`.
-- **Seed propagation:** Generate per-game seeds deterministically from the
-  tournament seed, e.g., `game_seed = tournament_seed + game_index`.
-- **Optional multiprocessing:** Each game is a pure function with no shared
-  state, making tournament execution embarrassingly parallel:
-  ```python
-  from multiprocessing import Pool
-
-  def run_single_game(args):
-      white, black, variant, depth, max_moves, seed = args
-      return play_game(white, black, variant, depth, max_moves, seed)
-
-  with Pool(workers) as pool:
-      results = list(tqdm(pool.imap(run_single_game, game_args), total=n))
-  ```
-  With 4 workers, a 930-game tournament runs roughly 4x faster. Add a
-  `--workers` CLI flag to control this. Default to 1 (sequential) for
-  determinism debugging, then scale up for production runs.
-
-**Result I/O (`tournament/results_io.py`):**
-
-- `save_results_json`: Serialize `list[GameResult]` to JSON.
-- `load_results_json`: Deserialize from JSON.
-- `save_results_csv`: Write flat CSV for external analysis.
-
-**Leaderboard (`tournament/leaderboard.py`):**
-
-- Scoring: win = 1.0, draw = 0.5, loss = 0.0.
-- `score_rate = (wins + 0.5 * draws) / games_played`
-- Sort descending by `score_rate`.
-- Include agent's feature tuple for cross-referencing with analysis.
-
-#### Checkpoints
-
-| ID  | Criterion                                                  |
-|-----|------------------------------------------------------------|
-| 4A  | Random vs random game completes without crash              |
-| 4B  | FeatureSubsetAgent vs FeatureSubsetAgent game completes    |
-| 4C  | 3 agents produce 6 ordered games (3 * 2 = 6)              |
-| 4D  | Leaderboard contains all agents with correct game counts   |
-| 4E  | Results save to JSON and load back identically             |
-| 4F  | `pytest tests/test_tournament.py` passes                   |
-
----
-
-### Area 5: Analysis + Reporting + CLI + Optional UI
-
-**Owner:** Developer 5
-
-**Goal:** Analyze tournament results for feature importance, generate reports,
-expose CLI commands, and optionally build a Streamlit dashboard.
-
-**Files owned:**
-
-```
 analysis/feature_marginals.py
 analysis/synergy.py
 analysis/interpretation.py
@@ -1427,109 +1361,144 @@ analysis/__init__.py
 reports/markdown_report.py
 reports/__init__.py
 main.py
-ui/app.py
+ui/app.py                     # optional Streamlit UI
+tests/test_tournament.py
 tests/test_analysis.py
 ```
 
-**Must not edit:** `core/`, `variants/`, `features/`, `agents/`, `search/`,
-`simulation/`, `tournament/`
+**Must not edit:** `core/`, `variants/`, `features/`, `agents/`, `search/`
 
-**May import from:** all modules.
+**May import from:** all modules (at integration time).
 
 #### Detailed Responsibilities
 
-**Feature marginals (`analysis/feature_marginals.py`):**
+##### Game Simulation (`simulation/game.py`)
+
+**`play_game(white, black, variant, depth, max_moves, seed) -> GameResult`:**
+
+- Initialize board from `Board.starting_position()`.
+- Alternate turns: white moves first.
+- For `FeatureSubsetAgent`: create `AlphaBetaEngine(agent, depth)` and call
+  `engine.choose_move(board)`.
+- For `RandomAgent`: call `agent.choose_move(board, variant)`.
+- Apply moves with `get_apply_move(variant)(board, move)`.
+- Terminate on: winner set, no legal moves, or move cap.
+- Track per-side average nodes searched and time per move.
+- Use `random.Random(seed)` for local seeded RNG (never `random.seed()`).
+
+**`mock_play_game(white, black, **kwargs) -> GameResult`:**
+
+For development before ENGINE integration:
+
+```python
+def mock_play_game(white, black, **kwargs) -> GameResult:
+    rng = random.Random(kwargs.get("seed", 42))
+    return GameResult(
+        white_agent=white.name, black_agent=black.name,
+        winner=rng.choice(["w", "b", None]),
+        moves=rng.randint(10, 80),
+        termination_reason="move_cap",
+        white_avg_nodes=0, black_avg_nodes=0,
+        white_avg_time=0, black_avg_time=0,
+    )
+```
+
+**Random agent (`simulation/random_agent.py`):**
+
+```python
+class RandomAgent:
+    name: str = "RandomAgent"
+    def choose_move(self, board: Board, variant: str = "standard") -> Move:
+        moves = get_generate_legal_moves(variant)(board)
+        return random.choice(moves)
+```
+
+##### Round-Robin Tournament (`tournament/round_robin.py`)
+
+- Every ordered pair `(A, B)` where `A != B`: A as white, B as black.
+- N agents -> `N * (N - 1)` games.
+- Progress bar with `tqdm`.
+- Per-game seed: `tournament_seed + game_index`.
+- **Optional multiprocessing:** Games are embarrassingly parallel:
+  ```python
+  from multiprocessing import Pool
+  with Pool(workers) as pool:
+      results = list(tqdm(pool.imap(run_single_game, game_args), total=n))
+  ```
+  Add `--workers` CLI flag. Default to 1 for determinism debugging.
+
+##### Result I/O (`tournament/results_io.py`)
+
+- `save_results_json`, `load_results_json`, `save_results_csv`.
+
+##### Leaderboard (`tournament/leaderboard.py`)
+
+- win = 1.0, draw = 0.5, loss = 0.0.
+- `score_rate = (wins + 0.5 * draws) / games_played`.
+- Sort descending by `score_rate`.
+
+##### Feature Marginals (`analysis/feature_marginals.py`)
 
 For each feature `f`:
 
 ```
-avg_score_with    = mean score_rate of all agents that include f
-avg_score_without = mean score_rate of all agents that exclude f
+avg_score_with    = mean score_rate of agents containing f
+avg_score_without = mean score_rate of agents excluding f
 marginal          = avg_score_with - avg_score_without
 top_k_frequency   = (# of top-k agents containing f) / k
 ```
 
-**Pairwise synergy (`analysis/synergy.py`):**
-
-For each pair `(a, b)`:
+##### Pairwise Synergy (`analysis/synergy.py`)
 
 ```
-avg_with_both     = mean score_rate of agents containing both a and b
-avg_with_a_only   = mean score_rate of agents containing a (with or without b)
-avg_with_b_only   = mean score_rate of agents containing b (with or without a)
-overall_avg       = mean score_rate of all agents
-
-synergy(a, b)     = avg_with_both - avg_with_a_only - avg_with_b_only + overall_avg
+synergy(a, b) = avg_with_both - avg_with_a - avg_with_b + overall_avg
 ```
 
-This is the standard two-way interaction term from factorial experimental
-design (see References, Section 16).
+This is the standard ANOVA two-way interaction term (see References,
+Section 16).
 
-**Interpretation (`analysis/interpretation.py`):**
+##### Interpretation (`analysis/interpretation.py`)
 
-Generate a natural-language paragraph summarizing:
-- Which features contribute most to winning.
-- Which feature pairs are synergistic.
-- What this implies about the variant's strategic character.
+Natural-language paragraph summarizing which features contribute most,
+which pairs are synergistic, and what this implies about the variant.
 
-**Markdown report (`reports/markdown_report.py`):**
+##### Markdown Report (`reports/markdown_report.py`)
 
-Report sections:
-1. Title and date
-2. Executive summary
-3. Variant description
-4. Feature library (names + descriptions)
-5. Tournament configuration (depth, max_moves, agent count, game count)
-6. Top-10 leaderboard table
-7. Best discovered feature subset
-8. Feature contribution analysis table
-9. Top pairwise synergies table
-10. Interpretation paragraph
-11. Limitations section
+Sections: title, summary, variant, features, config, top-10 leaderboard,
+best subset, marginals, synergies, interpretation, limitations.
 
-**CLI (`main.py`):**
+##### CLI (`main.py`)
 
 Use Typer. Required commands:
 
 ```bash
-# Play a random game and print the result
 python main.py random-game --variant atomic
-
-# Play a match between two specific feature sets
 python main.py match --white material --black enemy_king_danger,capture_threats --depth 2
-
-# Run full round-robin tournament
 python main.py tournament --variant atomic --depth 2 --max-moves 80
-
-# Analyze existing tournament results
 python main.py analyze --input outputs/data/tournament_results_atomic.json
-
-# Run the complete pipeline end-to-end
 python main.py full-pipeline --variant atomic --depth 2 --max-moves 80
 ```
 
-**Optional Streamlit UI (`ui/app.py`):**
+##### Optional Streamlit UI (`ui/app.py`)
 
-Sections:
-- Variant selector
-- Feature selector checkboxes
-- Depth and max-moves sliders
-- Run tournament button
-- Leaderboard table
-- Feature contribution bar chart
-- Synergy heatmap
-- Report preview
+Variant selector, feature checkboxes, depth/max-moves sliders, run button,
+leaderboard table, feature contribution bar chart, synergy heatmap.
 
 #### Checkpoints
 
-| ID  | Criterion                                                    |
-|-----|--------------------------------------------------------------|
-| 5A  | Feature marginals correct on synthetic leaderboard data      |
-| 5B  | Synergy analysis correct on synthetic leaderboard data       |
-| 5C  | Markdown report generates without error                      |
-| 5D  | `python main.py --help` shows all commands                   |
-| 5E  | `full-pipeline` calls all components end-to-end              |
-| 5F  | `pytest tests/test_analysis.py` passes                       |
+| ID  | Criterion                                                        |
+|-----|------------------------------------------------------------------|
+| 2A  | Random vs random game completes (with mock or real play_game)    |
+| 2B  | FeatureSubsetAgent vs FeatureSubsetAgent game completes          |
+| 2C  | 3 agents produce 6 ordered games                                 |
+| 2D  | Leaderboard contains all agents with correct game counts         |
+| 2E  | Results save to JSON and load back identically                   |
+| 2F  | Feature marginals correct on synthetic leaderboard data          |
+| 2G  | Synergy analysis correct on synthetic leaderboard data           |
+| 2H  | Markdown report generates without error                          |
+| 2I  | `python main.py --help` shows all commands                       |
+| 2J  | `full-pipeline` calls all components end-to-end                  |
+| 2K  | `pytest tests/test_tournament.py tests/test_analysis.py` passes  |
 
 ---
 
@@ -1537,135 +1506,131 @@ Sections:
 
 ### 9.1 Branch Strategy
 
-Each developer works on a dedicated branch:
-
 ```
-area-1-core-variant
-area-2-features
-area-3-agents-search
-area-4-simulation-tournament
-area-5-analysis-cli
+main                  # Foundation (working standard chess engine) + stubs
+area-1-engine         # Developer 1: variants, features, search
+area-2-harness        # Developer 2: tournament, analysis, reporting, CLI
 ```
 
-All branches are created from `main` after the initial stub commit.
+Both branches are created from `main` after the Foundation is committed.
 
-### 9.2 Stub-First Development
+### 9.2 Foundation-First Development
 
-Before any area-specific work begins, create a single commit on `main` with
-**stub files** for all shared interfaces. Every function and class listed in
-Section 7 should exist as a stub that raises `NotImplementedError`:
+Before branching, build the Foundation on `main` (see Section 8). This
+gives both developers a working chess engine to build on. All remaining
+interfaces are committed as stubs that raise `NotImplementedError`.
 
-```python
-def generate_moves(board: Board) -> list[Move]:
-    raise NotImplementedError
-```
-
-This allows all 5 areas to develop and test in parallel by importing from
-stubs. Each area replaces stubs with real implementations as they develop.
+**Area 2 (HARNESS) uses `mock_play_game()`** during development so it has
+zero dependency on Area 1's progress. This means both developers can work
+in full parallel from the moment they branch.
 
 ### 9.3 Merge Order
 
-The recommended merge order reflects the dependency graph:
-
 ```
-Area 1 (core)  -->  Area 2 (features)  -->  Area 3 (agents/search)
-                                                      |
-                                                      v
-                                            Area 4 (simulation/tournament)
-                                                      |
-                                                      v
-                                            Area 5 (analysis/CLI)
+Foundation (main)
+    |
+    +--- Area 1 (ENGINE) ---> merge to main first
+    |
+    +--- Area 2 (HARNESS) --> rebase onto main after Area 1, then merge
 ```
 
-However, with stubs, all areas can develop simultaneously. At integration
-time, merge in dependency order and run cross-area integration tests.
+Area 1 merges first because Area 2's `play_game()` needs the real engine
+at integration time. However, Area 2's analysis, reporting, and CLI code
+is fully tested against mock data before integration.
 
 ### 9.4 Conflict Minimization Rules
 
-1. **Own your folder.** Do not edit files in another area's folder.
-2. **Do not change shared function signatures.** If a signature must change,
-   update `docs/interfaces.md` first and notify all developers.
+1. **Own your files.** Do not edit files in the other area's file list.
+2. **Do not change shared interface signatures.** If a signature must change,
+   update `docs/interfaces.md` first and notify the other developer.
 3. **Tests live with ownership.** Each developer writes tests for their area.
-4. **Use imports, not duplication.** Area 5 must not reimplement tournament
-   logic; it imports from tournament/.
-5. **No global state.** Pass all configuration explicitly: variant, depth,
+4. **No global state.** Pass all configuration explicitly: variant, depth,
    max_moves, seed, feature_names, output_dir.
-6. **Keep output formats stable.** `GameResult` and `LeaderboardRow` fields
+5. **Keep output formats stable.** `GameResult` and `LeaderboardRow` fields
    should not change after initial agreement.
 
 ---
 
 ## 10. Integration & Merge Plan
 
-### Phase 1: Stub Foundation
+### Phase 1: Foundation
 
-Create stubs on `main`. All developers branch from this.
+Build and commit the Foundation on `main` (Section 8). Verify with the
+Foundation acceptance test. Both developers branch from this commit.
 
 ### Phase 2: Parallel Development
 
-All 5 areas develop independently on their branches. Each area's tests use
-stubs or mocks for dependencies.
+- **Developer 1** (Area 1) builds variants, features, agents, and search
+  on `area-1-engine`.
+- **Developer 2** (Area 2) builds tournament, analysis, reporting, and CLI
+  on `area-2-harness`, using `mock_play_game()` for all testing.
 
-### Phase 3: Integration (merge order)
+Both work simultaneously with zero coordination.
 
-1. Merge Area 1. Run `test_board.py`, `test_move_generation.py`, `test_atomic.py`.
-2. Merge Area 2. Run all Area 1 tests + `test_features.py`.
-3. Merge Area 3. Run all prior tests + `test_agents.py`, `test_alpha_beta.py`.
-4. Merge Area 4. Run all prior tests + `test_tournament.py`.
-5. Merge Area 5. Run all tests + `python main.py full-pipeline`.
+### Phase 3: Integration
+
+1. Merge Area 1 to `main`. Run all Area 1 tests.
+2. Rebase Area 2 onto `main`. Swap `mock_play_game` for real `play_game`.
+3. Merge Area 2 to `main`. Run all tests.
 
 ### Phase 4: End-to-End Validation
 
-Run the full pipeline:
-
 ```bash
+# Standard chess
+python main.py full-pipeline --variant standard --depth 2 --max-moves 80
+
+# Atomic chess
 python main.py full-pipeline --variant atomic --depth 2 --max-moves 80
 ```
 
-Verify all outputs are generated.
+Verify all outputs are generated and cross-variant comparison shows
+different feature rankings.
 
 ---
 
 ## 11. Performance Budget
 
-### Estimated Runtime (5 features, depth 2, max 80 moves)
+### Estimated Runtime (depth 2, max 80 moves)
 
-| Metric            | Value              |
-|-------------------|--------------------|
-| Agents            | 31                 |
-| Games             | 930                |
-| Avg plies/game    | ~40-60 (atomic is decisive) |
-| Nodes per move    | ~100-400 (depth 2 with alpha-beta pruning) |
-| Time per game     | ~0.5-2 seconds     |
-| **Total runtime** | **~8-30 minutes**  |
+With stratified sampling for 10 features (see Section 8, Area 1, Phase 3):
+
+| Metric            | Value (exhaustive, 5 feat) | Value (sampled, 10 feat) |
+|-------------------|---------------------------|--------------------------|
+| Agents            | 31                        | ~80-100                  |
+| Games             | 930                       | ~6,300-9,900             |
+| Avg plies/game    | ~40-60                    | ~40-60                   |
+| Nodes per move    | ~100-400                  | ~100-400                 |
+| Time per game     | ~0.5-2 sec                | ~0.5-2 sec               |
+| **Total runtime** | **~8-30 min**             | **~1-3 hours**           |
+| With 4 workers    | ~2-8 min                  | ~15-45 min               |
 
 ### Recommended Staged Approach
 
-For initial development and debugging:
-
-| Stage   | Features | Agents | Games | Est. Runtime |
-|---------|----------|--------|-------|--------------|
-| Debug   | 2        | 3      | 6     | < 10 sec     |
-| Small   | 3        | 7      | 42    | ~30 sec      |
-| Medium  | 4        | 15     | 210   | ~3-5 min     |
-| **Full**| **5**    | **31** | **930** | **~10-30 min** |
+| Stage      | Features | Mode       | Agents | Games  | Est. Runtime |
+|------------|----------|------------|--------|--------|--------------|
+| Debug      | 2        | exhaustive | 3      | 6      | < 10 sec     |
+| Small      | 3        | exhaustive | 7      | 42     | ~30 sec      |
+| Medium     | 5        | exhaustive | 31     | 930    | ~10-30 min   |
+| **Full**   | **10**   | **sampled**| **~80**| **~6K**| **~1-3 hr**  |
 
 Start at the Debug stage. Graduate to Full only after the pipeline is stable.
+Use `--workers 4` to parallelize tournament games for production runs.
 
 ### Scaling Note
 
-Adding features is exponential. Each additional feature doubles the number of
-agents and roughly quadruples game count:
+Exhaustive subset enumeration is exponential. Stratified sampling makes
+larger feature sets tractable:
 
-| Features | Agents | Games   |
-|----------|--------|---------|
-| 5        | 31     | 930     |
-| 6        | 63     | 3,906   |
-| 7        | 127    | 16,002  |
-| 8        | 255    | 65,026  |
+| Features | Exhaustive Agents | Sampled Agents (max_agents=100) |
+|----------|-------------------|---------------------------------|
+| 5        | 31                | 31 (exhaustive, under limit)    |
+| 6        | 63                | 63 (exhaustive, under limit)    |
+| 7        | 127               | ~80 (sampled)                   |
+| 10       | 1,023             | ~80-100 (sampled)               |
 
-Do not exceed 5 features for the hackathon MVP. If more features are desired
-post-MVP, sampling strategies would be needed.
+The `max_agents` parameter controls the sampling budget. The stratified
+approach guarantees coverage of all single-feature and pairwise effects
+while sampling larger subsets uniformly.
 
 ---
 
@@ -1744,8 +1709,8 @@ Each pipeline run produces **all** of the following:
 2. **930 tournament game results** (31 * 30 ordered pairs)
 3. **Ranked leaderboard** sorted by score_rate
 4. **Best feature subset** identified
-5. **Feature marginal contribution table** (5 rows)
-6. **Pairwise synergy table** (10 pairs)
+5. **Feature marginal contribution table** (one row per feature)
+6. **Pairwise synergy table** (one row per feature pair)
 7. **Natural-language interpretation** paragraph
 8. **Markdown report** saved to `outputs/reports/{variant}_strategy_report.md`
 9. **All tests pass:** `pytest` exits with code 0
@@ -1760,13 +1725,14 @@ EngineLab: Interpretable Strategy Discovery for Chess Variants
 ==============================================================
 
 Variant: Atomic Chess
-Features: material, mobility, enemy_king_danger, own_king_safety, capture_threats
+Features: material, piece_position, center_control, king_safety, enemy_king_danger,
+          mobility, pawn_structure, bishop_pair, rook_activity, capture_threats
 
 Generating feature-subset agents...
-  Created 31 agents.
+  Created 87 agents (stratified sample from 1023 possible subsets).
 
-Running tournament (930 games, depth=2, max_moves=80)...
-  [########################################] 100% (930/930)
+Running tournament (7482 games, depth=2, max_moves=80, workers=4)...
+  [########################################] 100% (7482/7482)
   Tournament complete in X minutes.
 
 Leaderboard (top 10):
@@ -1796,21 +1762,22 @@ Report saved: outputs/reports/atomic_strategy_report.md
 
 ## 14. Hackathon Execution Strategy
 
-### Hour-by-Hour Plan (for a ~12-hour hackathon)
+### Hour-by-Hour Plan (for a ~12-hour hackathon, 2 developers)
 
-| Hours  | Activity                                                     |
-|--------|--------------------------------------------------------------|
-| 0-0.5  | Set up repo, create stubs, branch per area                   |
-| 0.5-3  | Parallel development: each area implements core logic        |
-| 3-4    | Checkpoint: run per-area tests, fix failures                 |
-| 4-5    | Begin integration: merge Areas 1-2, resolve issues           |
-| 5-6    | Continue integration: merge Areas 3-4                        |
-| 6-7    | Merge Area 5, run end-to-end pipeline                        |
-| 7-8    | Debug integration issues, run full tournament                |
-| 8-9    | Polish output: improve report, add charts                    |
-| 9-10   | Optional: build Streamlit UI                                 |
-| 10-11  | Prepare presentation, rehearse demo                          |
-| 11-12  | Final testing, buffer time for fixes                         |
+| Hours  | Developer 1 (ENGINE)                  | Developer 2 (HARNESS)                |
+|--------|---------------------------------------|--------------------------------------|
+| 0-1    | Build Foundation on `main` together   | Build Foundation on `main` together  |
+| 1-1.5  | Branch `area-1-engine`                | Branch `area-2-harness`              |
+| 1.5-3  | Atomic variant + first features       | Tournament + leaderboard (mock data) |
+| 3-4    | Complete feature library (10 feat)    | Analysis + synergy + marginals       |
+| 4-5    | Agent generation + evaluation         | Report generation + CLI              |
+| 5-6    | Production alpha-beta search          | Polish CLI, add multiprocessing      |
+| 6-7    | Run per-area tests, fix failures      | Run per-area tests, fix failures     |
+| 7-8    | Merge Area 1 to main                  | Rebase, swap mock, merge Area 2      |
+| 8-9    | Integration debugging, full pipeline  | Integration debugging, full pipeline |
+| 9-10   | Optional: Antichess variant           | Optional: Streamlit UI               |
+| 10-11  | Prepare presentation, rehearse demo   | Prepare presentation, rehearse demo  |
+| 11-12  | Final testing, buffer for fixes       | Final testing, buffer for fixes      |
 
 ### Priority Stack (if time is limited)
 
@@ -1823,7 +1790,7 @@ Report saved: outputs/reports/atomic_strategy_report.md
 
 - Run with 3 features (7 agents, 42 games) for a live demo -- finishes in
   under a minute.
-- Have pre-computed 5-feature results ready to show.
+- Have pre-computed 10-feature results ready to show.
 - Lead with the factor-analysis analogy when presenting to Point 72 judges.
 - Show the Markdown report as the polished deliverable.
 
@@ -1833,21 +1800,17 @@ Report saved: outputs/reports/atomic_strategy_report.md
 
 ### MVP Limitations
 
-1. **No check enforcement:** Engines can ignore check. This may produce some
-   unrealistic positions but does not break the analysis pipeline.
-2. **No castling or en passant:** Simplified move generation omits these
-   standard chess rules.
-3. **Equal weights only:** The system discovers which features matter but not
+1. **Equal weights only:** The system discovers which features matter but not
    optimal weighting. A future extension could apply weight optimization.
-4. **Single game per ordered pair:** With 930 games across 31 agents, there
-   are 2 games per unordered pair (one per color). More games would increase
-   statistical power.
-5. **Depth 2 search:** Very shallow. Depth 3-4 would produce higher-quality
+2. **Single game per ordered pair:** More games per matchup would increase
+   statistical power and reduce variance.
+3. **Depth 2 search:** Very shallow. Depth 3-4 would produce higher-quality
    play but at significantly increased runtime.
-6. **Python performance:** Pure Python limits search speed. For deeper search,
+4. **Python performance:** Pure Python limits search speed. For deeper search,
    a compiled engine (Rust, C++) would be needed.
-7. **Atomic-only:** The system currently supports only Atomic Chess. The
-   variant abstraction (`variants/base.py`) is designed for extension.
+5. **No draw detection:** The system does not detect threefold repetition or
+   the 50-move rule. Games terminate only on king capture/explosion, no
+   legal moves, or move cap.
 
 ### Future Extensions
 

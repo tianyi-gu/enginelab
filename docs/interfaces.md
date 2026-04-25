@@ -4,7 +4,7 @@ This file is the **single source of truth** for all cross-module interfaces.
 All developers must implement exactly these signatures. If a signature must
 change, update this file first and notify all developers.
 
-Last updated: 2026-04-24
+Last updated: 2026-04-25
 
 ---
 
@@ -40,6 +40,8 @@ class Board:
     side_to_move: str              # "w" or "b"
     winner: str | None             # "w", "b", or None
     move_count: int                # incremented each ply
+    castling_rights: dict[str, bool]   # {"K": True, "Q": True, "k": True, "q": True}
+    en_passant_square: Square | None   # target square for en passant capture, or None
 
     @staticmethod
     def starting_position() -> "Board":
@@ -95,10 +97,22 @@ from core.board import Board
 from core.move import Move
 
 def generate_moves(board: Board) -> list[Move]:
-    """Pseudo-legal moves for board.side_to_move."""
+    """Pseudo-legal moves for board.side_to_move.
+    Includes castling and en passant. Does NOT filter for check legality."""
 
 def generate_moves_for_color(board: Board, color: str) -> list[Move]:
     """Pseudo-legal moves for the given color, regardless of turn."""
+
+def is_square_attacked(board: Board, square: Square, by_color: str) -> bool:
+    """True if any piece of by_color attacks the given square."""
+
+def is_in_check(board: Board, color: str) -> bool:
+    """True if color's king is under attack by the opponent."""
+
+def generate_legal_moves(board: Board) -> list[Move]:
+    """Pseudo-legal moves filtered to remove those that leave the
+    moving side's king in check. This is the standard two-step approach:
+    generate pseudo-legal, apply each, check if own king is attacked."""
 ```
 
 ---
@@ -193,8 +207,12 @@ def feature_name(board: Board, color: str) -> float:
     """Positive = good for color. Must not mutate board."""
 ```
 
-MVP features: `material`, `mobility`, `enemy_king_danger`,
-`own_king_safety`, `capture_threats`.
+Full feature set (10 features):
+- **Material:** `material`
+- **Positional:** `piece_position`, `center_control`
+- **Safety:** `king_safety`, `enemy_king_danger`
+- **Dynamic:** `mobility`, `pawn_structure`, `bishop_pair`, `rook_activity`,
+  `capture_threats`
 
 ---
 
@@ -221,8 +239,11 @@ from agents.feature_subset_agent import FeatureSubsetAgent
 
 def generate_feature_subset_agents(
     feature_names: list[str],
+    max_agents: int = 100,
+    seed: int = 42,
 ) -> list[FeatureSubsetAgent]:
-    """One agent per nonempty subset. Weights = 1/len(subset).
+    """Exhaustive if 2^n - 1 <= max_agents, else stratified sample.
+    Weights = 1/len(subset).
     Names: sorted features joined by '__', prefixed 'Agent_'."""
 ```
 

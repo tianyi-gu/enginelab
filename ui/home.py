@@ -1,13 +1,15 @@
 """EngineLab animated landing page.
 
-Renders a full-width hero with WebGL neuronal shader background (ported
-from Darwin project), Canvas 2D particle bloom overlay, glassmorphic agent
-cards with typewriter text, and decorative mini chess boards — all via
-st.components.v1.html().
+Renders a full-width hero with WebGL neuronal shader background, particle
+bloom overlay, and a decorative 8x8 grid of mini chess boards each looping
+through real precomputed tournament games (mix of atomic, horde, and
+other variants).
 """
 from __future__ import annotations
 
 import streamlit.components.v1 as components
+
+from ui.home_animation_data import bake_animation_payload
 
 _HOME_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
@@ -63,36 +65,6 @@ body {
   pointer-events: none;
 }
 
-/* ── Mini chess boards ─────────────────────────────────────── */
-.mini-boards {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  pointer-events: none;
-}
-.mini-board {
-  position: absolute;
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  grid-template-rows: repeat(6, 1fr);
-  width: 140px;
-  height: 140px;
-  opacity: 0.10;
-  border: 1px solid rgba(98, 153, 36, 0.15);
-  border-radius: 4px;
-  overflow: hidden;
-}
-.mini-board .sq {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  line-height: 1;
-  user-select: none;
-}
-.sq-l { background: #2c2b29; }
-.sq-d { background: #1f1e1c; }
-
 /* ── Content layer ─────────────────────────────────────────── */
 .content {
   position: relative;
@@ -102,7 +74,7 @@ body {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  padding: 40px 24px;
+  padding: 32px 24px;
   text-align: center;
 }
 
@@ -144,7 +116,7 @@ body {
   color: rgba(255, 255, 255, 0.5);
   max-width: 520px;
   line-height: 1.6;
-  margin-bottom: 36px;
+  margin-bottom: 28px;
   font-weight: 200;
   letter-spacing: 0.02em;
 }
@@ -163,82 +135,42 @@ body {
   }
 }
 
-/* ── Agent cards ───────────────────────────────────────────── */
-.agent-grid {
+/* ── Chess animation grid (8x8 mini-boards each playing a real game) ── */
+.chess-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  max-width: 640px;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
   width: 100%;
-  margin-bottom: 32px;
+  max-width: 560px;
+  margin: 4px auto 32px;
+  opacity: 0.78;
+  filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.4));
 }
-.agent-card {
-  background: rgba(31, 30, 28, 0.55);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(98, 153, 36, 0.18);
-  border-radius: 12px;
-  padding: 16px 18px;
-  text-align: left;
-  transition: border-color 0.3s, transform 0.3s;
+.mini {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 2px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.45);
+  background: #b58863;
 }
-.agent-card:hover {
-  border-color: rgba(98, 153, 36, 0.5);
-  transform: translateY(-2px);
-}
-.agent-header {
+.cell {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 4px;
+  justify-content: center;
 }
-.agent-icon {
-  font-size: 1.6rem;
-  line-height: 1;
-  filter: drop-shadow(0 0 6px rgba(98,153,36,0.4));
-}
-.agent-name {
-  color: rgba(255, 255, 255, 0.9);
-  font-family: 'BBH Sans Bartle', sans-serif;
-  font-size: 0.85rem;
-  text-transform: lowercase;
-  letter-spacing: 0.1em;
-  font-weight: 400;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-.agent-traits {
-  color: rgba(255, 255, 255, 0.7);
-  font-family: 'Geist Mono', monospace;
-  font-size: 0.65rem;
-  margin-bottom: 10px;
-  font-weight: 400;
-  letter-spacing: 0.02em;
-}
-.agent-terminal {
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-family: 'Geist Mono', monospace;
-  font-size: 0.65rem;
-  color: rgba(255, 255, 255, 0.7);
-  height: 72px;
-  overflow: hidden;
-  line-height: 1.5;
-}
-.agent-terminal .line {
-  white-space: nowrap;
-  overflow: hidden;
-}
-.cursor {
-  color: #629924;
-  font-weight: bold;
-  animation: blink 1s step-end infinite;
-}
-@keyframes blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
+.cell.cl { background: #f0d9b5; }
+.cell.cd { background: #b58863; }
+.cell.exp { background: #ff1818 !important; }
+.cell img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
 }
 
 /* ── Bottom info ───────────────────────────────────────────── */
@@ -278,16 +210,6 @@ body {
 
 <div id="dither"></div>
 
-<!-- Mini chess boards (decorative) -->
-<div class="mini-boards">
-  <div class="mini-board" id="mb0" style="top:4%; left:3%;  transform:rotate(-6deg);"></div>
-  <div class="mini-board" id="mb1" style="top:58%;left:5%;  transform:rotate(4deg);"></div>
-  <div class="mini-board" id="mb2" style="top:6%; right:4%; transform:rotate(5deg);"></div>
-  <div class="mini-board" id="mb3" style="top:55%;right:3%; transform:rotate(-3deg);"></div>
-  <div class="mini-board" id="mb4" style="top:30%;left:1%;  transform:rotate(2deg);"></div>
-  <div class="mini-board" id="mb5" style="top:32%;right:1%; transform:rotate(-4deg);"></div>
-</div>
-
 <!-- Main content -->
 <div class="content">
   <div class="title fade-in">ENGINELAB</div>
@@ -298,52 +220,13 @@ body {
     actually win.
   </div>
 
-  <div class="agent-grid fade-in fade-in-d2">
-    <!-- Card 1: Standard -->
-    <div class="agent-card" id="card0">
-      <div class="agent-header">
-        <div class="agent-icon">&#9812;</div>
-        <div class="agent-name">Standard Strategist</div>
-      </div>
-      <div class="agent-traits">methodical, positional, material-driven</div>
-      <div class="agent-terminal" id="term0"></div>
-    </div>
-
-    <!-- Card 2: Atomic -->
-    <div class="agent-card" id="card1">
-      <div class="agent-header">
-        <div class="agent-icon">&#9818;</div>
-        <div class="agent-name">Atomic Tactician</div>
-      </div>
-      <div class="agent-traits">explosive, aggressive, king-danger-aware</div>
-      <div class="agent-terminal" id="term1"></div>
-    </div>
-
-    <!-- Card 3: Antichess -->
-    <div class="agent-card" id="card2">
-      <div class="agent-header">
-        <div class="agent-icon">&#9822;</div>
-        <div class="agent-name">Antichess Rebel</div>
-      </div>
-      <div class="agent-traits">sacrificial, contrarian, loss-seeking</div>
-      <div class="agent-terminal" id="term2"></div>
-    </div>
-
-    <!-- Card 4: Analyst -->
-    <div class="agent-card" id="card3">
-      <div class="agent-header">
-        <div class="agent-icon">&#9823;</div>
-        <div class="agent-name">Feature Analyst</div>
-      </div>
-      <div class="agent-traits">data-driven, systematic, pattern-seeking</div>
-      <div class="agent-terminal" id="term3"></div>
-    </div>
-  </div>
+  <!-- 8x8 grid of mini-boards each looping a real game -->
+  <div class="chess-grid fade-in fade-in-d2" id="chess-grid"></div>
 
   <div class="bottom-info fade-in fade-in-d3">
-    <span>10</span> features &middot;
-    <span>3</span> variants &middot;
-    <span>1023</span> possible engines &middot;
+    <span>12</span> features &middot;
+    <span>7</span> variants &middot;
+    <span>4095</span> possible engines &middot;
     alpha-beta search
   </div>
 </div>
@@ -352,7 +235,6 @@ body {
 /* ================================================================
    NEURO SHADER BACKGROUND
    Ported directly from Darwin's NeuroShaderCanvas.jsx
-   https://github.com/qtzx06/darwin/blob/main/src/components/NeuroShaderCanvas.jsx
    ================================================================ */
 (function() {
   var canvas = document.getElementById('neuro-canvas');
@@ -363,7 +245,6 @@ body {
   var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
   if (!gl) return;
 
-  // Vertex shader — identical to Darwin
   var vertexShaderSource =
     'precision mediump float;\n' +
     'attribute vec2 a_position;\n' +
@@ -373,7 +254,6 @@ body {
     '  gl_Position = vec4(a_position, 0.0, 1.0);\n' +
     '}\n';
 
-  // Fragment shader — Darwin's neuro_shape with green tint
   var fragmentShaderSource =
     'precision mediump float;\n' +
     'varying vec2 vUv;\n' +
@@ -413,7 +293,6 @@ body {
     '  noise += pow(noise, 10.0);\n' +
     '  noise = max(0.0, noise - 0.5);\n' +
     '  noise *= (1.0 - length(vUv - 0.5));\n' +
-    // Tint green instead of white: multiply by EngineLab green
     '  vec3 color = noise * vec3(0.38, 0.60, 0.14);\n' +
     '  gl_FragColor = vec4(color, noise);\n' +
     '}\n';
@@ -444,7 +323,6 @@ body {
   }
   gl.useProgram(program);
 
-  // Full-screen quad
   var vertices = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
   var buffer = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
@@ -458,7 +336,6 @@ body {
   var ratioLocation = gl.getUniformLocation(program, 'u_ratio');
   var pointerLocation = gl.getUniformLocation(program, 'u_pointer_position');
 
-  // Mouse tracking with smoothing (same as Darwin)
   var pointer = { x: 0.5, y: 0.5, tX: 0.5, tY: 0.5 };
   canvas.addEventListener('pointermove', function(e) {
     var rect = canvas.getBoundingClientRect();
@@ -466,7 +343,6 @@ body {
     pointer.tY = 1.0 - (e.clientY - rect.top) / rect.height;
   });
 
-  // Enable blending for transparent background
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
@@ -495,9 +371,6 @@ body {
 
 /* ================================================================
    PARTICLE BLOOM OVERLAY
-   Ported directly from Darwin's SideParticles.jsx
-   https://github.com/qtzx06/darwin/blob/main/src/components/SideParticles.jsx
-   Colors adapted from purple/pink to green/teal.
    ================================================================ */
 (function() {
   var canvas = document.getElementById('particles');
@@ -506,7 +379,6 @@ body {
   var particleCount = 200;
   var particles = [];
 
-  // Match Darwin's particle colors but in green/teal palette
   var colors = [
     'rgba(98, 153, 36, 0.4)',
     'rgba(122, 182, 72, 0.35)',
@@ -522,10 +394,7 @@ body {
   resize();
   window.addEventListener('resize', resize);
 
-  function Particle() {
-    this.reset();
-  }
-
+  function Particle() { this.reset(); }
   Particle.prototype.reset = function() {
     this.x = Math.random() * canvas.width;
     this.y = Math.random() * canvas.height;
@@ -536,7 +405,6 @@ body {
     this.life = Math.random() * 100 + 100;
     this.maxLife = this.life;
   };
-
   Particle.prototype.update = function() {
     this.x += this.vx;
     this.y += this.vy;
@@ -547,222 +415,156 @@ body {
     if (this.y < 0) this.y = canvas.height;
     if (this.y > canvas.height) this.y = 0;
   };
-
   Particle.prototype.draw = function() {
     var opacity = this.life / this.maxLife;
     var match = this.color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
     if (!match) return;
     var r = match[1], g = match[2], b = match[3];
-
-    // Outer glow — identical to Darwin
     ctx.beginPath();
     ctx.arc(this.x, this.y, this.radius * 3, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(' + r + ', ' + g + ', ' + b + ', ' + (opacity * 0.15) + ')';
     ctx.fill();
-
-    // Middle glow
     ctx.beginPath();
     ctx.arc(this.x, this.y, this.radius * 2, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(' + r + ', ' + g + ', ' + b + ', ' + (opacity * 0.4) + ')';
     ctx.fill();
-
-    // Core
     ctx.beginPath();
     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(' + r + ', ' + g + ', ' + b + ', ' + (opacity * 0.7) + ')';
     ctx.fill();
   };
-
-  for (var i = 0; i < particleCount; i++) {
-    particles.push(new Particle());
-  }
-
+  for (var i = 0; i < particleCount; i++) particles.push(new Particle());
   function animate() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    for (var i = 0; i < particles.length; i++) {
-      particles[i].update();
-      particles[i].draw();
-    }
+    for (var i = 0; i < particles.length; i++) { particles[i].update(); particles[i].draw(); }
     requestAnimationFrame(animate);
   }
   animate();
 })();
 
 /* ================================================================
-   MINI CHESS BOARDS
+   CHESS GRID ANIMATION
+   8x8 grid of mini-boards each looping a real precomputed game.
    ================================================================ */
 (function() {
-  var WP = ['\u2654','\u2655','\u2656','\u2657','\u2658','\u2659'];
-  var BP = ['\u265A','\u265B','\u265C','\u265D','\u265E','\u265F'];
+  var ANIMATION_DATA = __ANIMATION_DATA__;
+  var GRID = document.getElementById('chess-grid');
+  if (!GRID || !ANIMATION_DATA || ANIMATION_DATA.length === 0) return;
 
-  function initBoard(id) {
-    var el = document.getElementById(id);
-    if (!el) return null;
-    var cells = [];
-    var grid = [];
-    for (var r = 0; r < 6; r++) {
-      var row = [];
-      for (var c = 0; c < 6; c++) {
-        var sq = document.createElement('div');
-        sq.className = 'sq ' + ((r + c) % 2 === 0 ? 'sq-l' : 'sq-d');
-        el.appendChild(sq);
-        cells.push(sq);
-        row.push(null);
-      }
-      grid.push(row);
-    }
+  var PIECE_URL = 'https://chessboardjs.com/img/chesspieces/wikipedia/{p}.png';
+  var TICK_MS = 130;        // each board advances one move every ~130ms
+  var EXPLOSION_HOLD = 280; // hold an explosion frame so red flash registers
 
-    var pieces = [];
-    for (var k = 0; k < 5; k++) pieces.push(WP[Math.floor(Math.random()*WP.length)]);
-    for (var k = 0; k < 5; k++) pieces.push(BP[Math.floor(Math.random()*BP.length)]);
-
-    var placed = {};
-    for (var k = 0; k < pieces.length; k++) {
-      var tries = 0;
-      while (tries < 50) {
-        var rr = Math.floor(Math.random()*6);
-        var cc = Math.floor(Math.random()*6);
-        var key = rr*6+cc;
-        if (!placed[key]) {
-          placed[key] = true;
-          grid[rr][cc] = pieces[k];
-          cells[rr*6+cc].textContent = pieces[k];
-          break;
+  function parseFEN(fen) {
+    var ranks = fen.split(' ')[0].split('/');
+    var grid = new Array(64).fill(null);
+    for (var r = 0; r < 8; r++) {
+      var col = 0;
+      var rank = ranks[r];
+      for (var i = 0; i < rank.length; i++) {
+        var ch = rank[i];
+        if (ch >= '1' && ch <= '8') {
+          col += +ch;
+        } else {
+          var isW = (ch === ch.toUpperCase());
+          var code = (isW ? 'w' : 'b') + ch.toUpperCase();
+          grid[r * 8 + col] = code;
+          col++;
         }
-        tries++;
       }
     }
-
-    return { cells: cells, grid: grid };
+    return grid;
   }
 
-  function animateBoard(board) {
-    if (!board) return;
-    var g = board.grid;
-    var c = board.cells;
-
-    var occ = [], emp = [];
-    for (var r = 0; r < 6; r++) {
-      for (var col = 0; col < 6; col++) {
-        if (g[r][col]) occ.push([r, col]);
-        else emp.push([r, col]);
+  function buildBoard(idx) {
+    var board = document.createElement('div');
+    board.className = 'mini';
+    var cells = [];
+    for (var r = 0; r < 8; r++) {
+      for (var c = 0; c < 8; c++) {
+        var sq = document.createElement('div');
+        sq.className = 'cell ' + (((r + c) % 2 === 0) ? 'cl' : 'cd');
+        board.appendChild(sq);
+        cells.push(sq);
       }
     }
-    if (occ.length === 0 || emp.length === 0) return;
-
-    var from = occ[Math.floor(Math.random() * occ.length)];
-    var to   = emp[Math.floor(Math.random() * emp.length)];
-    var piece = g[from[0]][from[1]];
-
-    g[from[0]][from[1]] = null;
-    c[from[0]*6+from[1]].textContent = '';
-    g[to[0]][to[1]] = piece;
-    c[to[0]*6+to[1]].textContent = piece;
+    GRID.appendChild(board);
+    return { el: board, cells: cells, lastGrid: new Array(64).fill(null) };
   }
 
+  function renderBoard(b, fen, exploded) {
+    var grid = parseFEN(fen);
+    // Diff against last grid: only update changed cells
+    for (var i = 0; i < 64; i++) {
+      var prev = b.lastGrid[i];
+      var curr = grid[i];
+      if (prev !== curr) {
+        var cell = b.cells[i];
+        if (curr) {
+          // Reuse existing img if present
+          var img = cell.firstChild;
+          if (img && img.tagName === 'IMG') {
+            img.src = PIECE_URL.replace('{p}', curr);
+          } else {
+            cell.innerHTML = '';
+            var ni = document.createElement('img');
+            ni.src = PIECE_URL.replace('{p}', curr);
+            cell.appendChild(ni);
+          }
+        } else {
+          cell.innerHTML = '';
+        }
+      }
+    }
+    // Explosion highlight: clear all, then mark current
+    for (var k = 0; k < 64; k++) {
+      if (b.cells[k].classList.contains('exp')) b.cells[k].classList.remove('exp');
+    }
+    if (exploded && exploded.length) {
+      for (var j = 0; j < exploded.length; j++) {
+        var sq = exploded[j];
+        if (!sq || sq.length < 2) continue;
+        var file = sq.charCodeAt(0) - 97; // a-h
+        var rank = parseInt(sq[1], 10) - 1; // 1-8
+        if (file < 0 || file > 7 || rank < 0 || rank > 7) continue;
+        var idx = (7 - rank) * 8 + file;
+        b.cells[idx].classList.add('exp');
+      }
+    }
+    b.lastGrid = grid;
+  }
+
+  // Build all 64 boards
   var boards = [];
-  for (var i = 0; i < 6; i++) {
-    boards.push(initBoard('mb' + i));
+  for (var i = 0; i < ANIMATION_DATA.length; i++) {
+    var b = buildBoard(i);
+    b.data = ANIMATION_DATA[i];
+    b.frame = 0;
+    // Random initial offset so boards aren't synchronized
+    b.nextTick = performance.now() + Math.random() * 1500;
+    renderBoard(b, b.data.fens[0], b.data.exploded[0]);
+    boards.push(b);
   }
 
-  boards.forEach(function(b, idx) {
-    setInterval(function() { animateBoard(b); }, 1800 + idx * 400);
-  });
-})();
-
-/* ================================================================
-   TYPEWRITER TERMINALS
-   ================================================================ */
-(function() {
-  var PHRASES = [
-    [
-      "evaluating material balance... +2.3",
-      "mobility score for Nf3: 0.85",
-      "pawn_structure: isolated d-pawn detected",
-      "center_control weight adjusted to 0.61",
-      "bishop_pair bonus applied: +0.18",
-      "rook_activity on open file: significant",
-    ],
-    [
-      "explosion radius check on e4... 5 pieces",
-      "king_danger threshold exceeded at g8",
-      "capture_threats near enemy king: critical",
-      "simulating atomic chain reaction d5-e4...",
-      "enemy_king_danger score: 0.94",
-      "avoiding self-explosion on f7... filtered",
-    ],
-    [
-      "minimizing material... sacrifice Qd1",
-      "forcing capture sequence: Bxf7+ Kxf7",
-      "piece_position inverted: corners preferred",
-      "material is a liability: shedding pieces",
-      "pawn advance to force opponent captures",
-      "target: 0 remaining pieces = victory",
-    ],
-    [
-      "pairwise synergy: material + mobility = 0.82",
-      "running round-robin: game 147/210...",
-      "top agent: king_safety + capture_threats",
-      "feature marginal: center_control +0.034",
-      "computing leaderboard... 31 agents ranked",
-      "bishop_pair + rook_activity: synergy 0.41",
-    ],
-  ];
-
-  function Typewriter(termId, phrases) {
-    this.el = document.getElementById(termId);
-    this.phrases = phrases;
-    this.pIdx = 0;
-    this.lines = [];
-    this.el.innerHTML = '';
-  }
-
-  Typewriter.prototype.start = function() {
-    this._next();
-  };
-
-  Typewriter.prototype._next = function() {
-    var self = this;
-    var phrase = self.phrases[self.pIdx % self.phrases.length];
-    self.pIdx++;
-
-    var lineEl = document.createElement('div');
-    lineEl.className = 'line';
-    self.el.appendChild(lineEl);
-    self.lines.push(lineEl);
-
-    while (self.lines.length > 3) {
-      var old = self.lines.shift();
-      if (old.parentNode) old.parentNode.removeChild(old);
-    }
-
-    var charIdx = 0;
-    var cursor = document.createElement('span');
-    cursor.className = 'cursor';
-    cursor.textContent = '_';
-
-    function typeChar() {
-      if (charIdx < phrase.length) {
-        lineEl.textContent = phrase.slice(0, charIdx + 1);
-        lineEl.appendChild(cursor);
-        charIdx++;
-        setTimeout(typeChar, 30 + Math.random() * 25);
-      } else {
-        if (cursor.parentNode) cursor.parentNode.removeChild(cursor);
-        setTimeout(function() { self._next(); }, 1800 + Math.random() * 1200);
+  function loop() {
+    var now = performance.now();
+    for (var i = 0; i < boards.length; i++) {
+      var b = boards[i];
+      if (now < b.nextTick) continue;
+      b.frame++;
+      if (b.frame >= b.data.fens.length) {
+        b.frame = 0;
       }
+      var fen = b.data.fens[b.frame];
+      var exp = b.data.exploded[b.frame];
+      renderBoard(b, fen, exp);
+      var hold = (exp && exp.length) ? EXPLOSION_HOLD : TICK_MS;
+      // ±15ms jitter so they stay desynchronized
+      b.nextTick = now + hold + (Math.random() * 30 - 15);
     }
-    typeChar();
-  };
-
-  for (var i = 0; i < 4; i++) {
-    (function(idx) {
-      setTimeout(function() {
-        var tw = new Typewriter('term' + idx, PHRASES[idx]);
-        tw.start();
-      }, idx * 600 + 800);
-    })(i);
+    requestAnimationFrame(loop);
   }
+  loop();
 })();
 </script>
 
@@ -772,4 +574,6 @@ body {
 
 def render_home_page() -> None:
     """Render the full-width animated landing page."""
-    components.html(_HOME_TEMPLATE, height=900, scrolling=False)
+    payload = bake_animation_payload(64)
+    html = _HOME_TEMPLATE.replace("__ANIMATION_DATA__", payload)
+    components.html(html, height=900, scrolling=False)

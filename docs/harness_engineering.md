@@ -219,21 +219,16 @@ next) consumes 2-3 working memory slots. This puts the practical ceiling at
 ### Recommended Parallelization Schedule
 
 ```
-Phase 1 (hours 0-3):   Run Areas 1 + 2 in parallel
-                        (Area 1 has no dependencies,
-                         Area 2 can use stubs for core/)
+Phase 1 (hour 0-1):    Build Foundation together on main
+                        (working standard chess engine)
 
-Phase 2 (hours 2-5):   Start Area 3 once Area 1 nears completion
-                        Continue Area 2 if not done
-                        (max 2-3 agents active)
+Phase 2 (hours 1-6):   Run Area 1 (ENGINE) + Area 2 (HARNESS) in parallel
+                        (Area 2 uses mock_play_game, zero ENGINE dependency)
 
-Phase 3 (hours 4-7):   Start Area 4 once Area 3 nears completion
-                        Begin Area 5 CLI scaffolding with stubs
+Phase 3 (hours 6-8):   Integration: merge Area 1, rebase Area 2, merge Area 2
+                        Run full pipeline end-to-end
 
-Phase 4 (hours 6-9):   Integration and Area 5 completion
-                        (likely 1-2 agents)
-
-Phase 5 (hours 8-11):  Polish, pen-test, demo prep
+Phase 4 (hours 8-10):  Polish, pen-test, demo prep
                         (1 agent + human review)
 ```
 
@@ -277,20 +272,16 @@ its own directory with its own branch.
 cd /path/to/engine-lab
 
 # Create worktrees for each area
-git worktree add ../engine-lab-area1 area-1-core-variant
-git worktree add ../engine-lab-area2 area-2-features
-git worktree add ../engine-lab-area3 area-3-agents-search
-git worktree add ../engine-lab-area4 area-4-simulation-tournament
-git worktree add ../engine-lab-area5 area-5-analysis-cli
+git worktree add ../engine-lab-area1 area-1-engine
+git worktree add ../engine-lab-area2 area-2-harness
 ```
 
 Each agent gets its own working directory:
 
 ```
 /path/to/engine-lab/           # main checkout (integration)
-/path/to/engine-lab-area1/     # Agent 1's workspace
-/path/to/engine-lab-area2/     # Agent 2's workspace
-...
+/path/to/engine-lab-area1/     # Developer 1's workspace (ENGINE)
+/path/to/engine-lab-area2/     # Developer 2's workspace (HARNESS)
 ```
 
 ### Agent Commit Discipline
@@ -317,11 +308,12 @@ If running only 2-3 agents, worktrees are optional. You can use separate
 terminal sessions with each agent on a different branch:
 
 ```bash
-# Terminal 1 (Agent for Area 1)
-git checkout area-1-core-variant
+# Terminal 1 (Developer 1 - ENGINE)
+git checkout area-1-engine
 
-# Terminal 2 (Agent for Area 2)
+# Terminal 2 (Developer 2 - HARNESS)
 # Use a separate clone or worktree
+git checkout area-2-harness
 ```
 
 The key rule: **no two agents should operate on the same directory
@@ -383,10 +375,10 @@ During the hackathon:
 - [ ] Run 2-3 agents max concurrently
 - [ ] Check in at each checkpoint (review test output)
 - [ ] Cross-review each area before merging
-- [ ] Merge in dependency order (1 -> 2 -> 3 -> 4 -> 5)
+- [ ] Merge in dependency order (Area 1 -> Area 2)
 - [ ] Run pen-test session after integration
 - [ ] Verify determinism (two identical runs, diff outputs)
-- [ ] Run full pipeline with 3 features before attempting 5 features
+- [ ] Run full pipeline with 3 features before attempting 10 features
 
 ---
 

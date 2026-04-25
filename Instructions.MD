@@ -51,8 +51,8 @@ discovery is transparent, reproducible, and fully interpretable.
 
 ### What It Produces
 
-- 31 AI engines (one per nonempty subset of 5 features)
-- 930 tournament games (full round-robin, both colors)
+- ~80-100 AI engines (stratified sample of feature subsets from 10 features)
+- Thousands of tournament games (full round-robin, both colors)
 - Ranked leaderboard with win rates
 - Feature marginal contribution analysis
 - Pairwise feature synergy matrix
@@ -445,8 +445,8 @@ rule of Antichess and is trivial to implement.
 
 ### 4.7 Variant-Specific Feature Behavior
 
-The four core features work identically across all variants:
-`material`, `mobility`, `enemy_king_danger`, `own_king_safety`.
+Most features work identically across all variants:
+`material`, `mobility`, `enemy_king_danger`, `king_safety`, etc.
 
 The `capture_threats` feature is variant-aware:
 
@@ -457,7 +457,7 @@ The `capture_threats` feature is variant-aware:
 | Antichess | Value of own pieces that opponent can capture (inverted logic)   |
 
 The feature signature remains `(board, color) -> float` but the function
-internally checks the variant. See Section 8 (Area 2) for implementation
+internally checks the variant. See Section 8 (Area 1) for implementation
 details.
 
 ### 4.8 Check Legality Enforcement
@@ -534,65 +534,70 @@ engine-lab/
 |
 |-- README.md
 |-- requirements.txt
-|-- main.py                          # CLI entry point (Area 5)
+|-- main.py                          # CLI entry point (Area 2)
 |
-|-- core/                            # Area 1
+|-- core/                            # Foundation
 |   |-- __init__.py
 |   |-- types.py                     # Square type alias, color helpers
 |   |-- board.py                     # Board class
 |   |-- move.py                      # Move class
 |   |-- coordinates.py               # Square/algebraic conversion helpers
-|   |-- move_generation.py           # Pseudo-legal move generation
-|   `-- apply_move.py                # Standard move application (non-atomic)
+|   |-- move_generation.py           # Pseudo-legal + legal move generation
+|   `-- apply_move.py                # Standard move application
 |
-|-- variants/                        # Area 1
+|-- variants/                        # Foundation + Area 1
 |   |-- __init__.py
 |   |-- base.py                      # Variant dispatch + shared helpers
-|   |-- standard.py                  # Standard Chess (king capture)
-|   |-- atomic.py                    # Atomic Chess (explosions)
-|   `-- antichess.py                 # Antichess / Losing Chess (optional)
+|   |-- standard.py                  # Standard Chess (Foundation)
+|   |-- atomic.py                    # Atomic Chess (Area 1)
+|   `-- antichess.py                 # Antichess (Area 1, optional)
 |
-|-- features/                        # Area 2
+|-- features/                        # Area 1
 |   |-- __init__.py
 |   |-- registry.py                  # Feature registry and access functions
-|   |-- material.py                  # Material balance feature
-|   |-- mobility.py                  # Move count difference feature
-|   |-- king_danger.py               # Pressure on opponent king
+|   |-- material.py                  # Material balance
+|   |-- piece_position.py            # Piece-square table bonus
+|   |-- center_control.py            # Center square control
 |   |-- king_safety.py               # Own king safety (defense)
+|   |-- king_danger.py               # Pressure on opponent king
+|   |-- mobility.py                  # Move count difference
+|   |-- pawn_structure.py            # Pawn quality analysis
+|   |-- bishop_pair.py               # Bishop pair bonus
+|   |-- rook_activity.py             # Rook open file / 7th rank
 |   `-- capture_threats.py           # Tactical capture/explosion threats
 |
-|-- agents/                          # Area 3
+|-- agents/                          # Area 1
 |   |-- __init__.py
 |   |-- feature_subset_agent.py      # FeatureSubsetAgent dataclass
-|   |-- generate_agents.py           # Power-set agent generation
+|   |-- generate_agents.py           # Exhaustive/sampled agent generation
 |   `-- evaluation.py                # Position evaluation from features
 |
-|-- search/                          # Area 3
+|-- search/                          # Area 1
 |   |-- __init__.py
 |   `-- alpha_beta.py                # Alpha-beta search engine
 |
-|-- simulation/                      # Area 4
+|-- simulation/                      # Area 2
 |   |-- __init__.py
 |   |-- game.py                      # Single game simulation
 |   `-- random_agent.py              # Random move baseline agent
 |
-|-- tournament/                      # Area 4
+|-- tournament/                      # Area 2
 |   |-- __init__.py
 |   |-- round_robin.py               # Round-robin tournament runner
 |   |-- leaderboard.py               # Leaderboard computation
 |   `-- results_io.py                # JSON/CSV save and load
 |
-|-- analysis/                        # Area 5
+|-- analysis/                        # Area 2
 |   |-- __init__.py
 |   |-- feature_marginals.py         # Marginal feature contribution
 |   |-- synergy.py                   # Pairwise synergy analysis
 |   `-- interpretation.py            # Natural-language interpretation
 |
-|-- reports/                         # Area 5
+|-- reports/                         # Area 2
 |   |-- __init__.py
 |   `-- markdown_report.py           # Markdown report generator
 |
-|-- ui/                              # Area 5 (optional)
+|-- ui/                              # Area 2 (optional)
 |   `-- app.py                       # Streamlit dashboard
 |
 |-- outputs/                         # Generated artifacts (gitignored)
@@ -607,14 +612,16 @@ engine-lab/
 |
 `-- tests/                           # All test files
     |-- __init__.py
-    |-- test_board.py                # Area 1
-    |-- test_move_generation.py      # Area 1
+    |-- test_board.py                # Foundation
+    |-- test_move_generation.py      # Foundation
+    |-- test_standard.py             # Foundation
     |-- test_atomic.py               # Area 1
-    |-- test_features.py             # Area 2
-    |-- test_agents.py               # Area 3
-    |-- test_alpha_beta.py           # Area 3
-    |-- test_tournament.py           # Area 4
-    `-- test_analysis.py             # Area 5
+    |-- test_antichess.py            # Area 1 (optional)
+    |-- test_features.py             # Area 1
+    |-- test_agents.py               # Area 1
+    |-- test_alpha_beta.py           # Area 1
+    |-- test_tournament.py           # Area 2
+    `-- test_analysis.py             # Area 2
 ```
 
 ---
@@ -1705,8 +1712,8 @@ python main.py full-pipeline --variant atomic --depth 2 --max-moves 80
 
 Each pipeline run produces **all** of the following:
 
-1. **31 generated feature-subset agents** (one per nonempty subset of 5 features)
-2. **930 tournament game results** (31 * 30 ordered pairs)
+1. **Feature-subset agents** (stratified sample from 10 features, or exhaustive for fewer)
+2. **Tournament game results** (full round-robin, all ordered pairs)
 3. **Ranked leaderboard** sorted by score_rate
 4. **Best feature subset** identified
 5. **Feature marginal contribution table** (one row per feature)
@@ -1736,13 +1743,13 @@ Running tournament (7482 games, depth=2, max_moves=80, workers=4)...
   Tournament complete in X minutes.
 
 Leaderboard (top 10):
-  1. Agent_capture_threats__enemy_king_danger__own_king_safety  0.68
+  1. Agent_capture_threats__enemy_king_danger__king_safety  0.68
   2. ...
 
 Feature Contributions:
   enemy_king_danger:  +0.17
   capture_threats:    +0.11
-  own_king_safety:    +0.07
+  king_safety:        +0.07
   mobility:           +0.01
   material:           -0.03
 

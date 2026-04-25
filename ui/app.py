@@ -16,6 +16,7 @@ import streamlit as st
 from ui.constants import ALL_FEATURES, FEATURE_DISPLAY_NAMES
 from ui.board import render_board, starting_fen
 from ui.chess_viewer import chess_game_viewer
+from ui.play_engine import engine_reply as _pure_engine_reply, apply_san_move, game_status
 
 # ---------------------------------------------------------------------------
 # Page config (must be first Streamlit call)
@@ -34,38 +35,81 @@ st.set_page_config(
 
 _CSS = """
 <style>
+/* ── Inter font ───────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+body, .stApp, p, label, div, span, button, input,
+.stMarkdown, [class*="st-"] {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
+}
+
+/* ── Global background ───────────────────────────────────── */
 body, .stApp { background: #161512 !important; }
 
 .block-container {
-    padding-top: 0.5rem !important;
+    padding-top: 0.4rem !important;
     max-width: 100% !important;
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
 }
 
+/* ── Typography ──────────────────────────────────────────── */
 h3 {
-    color: #bababa !important;
+    color: #d0cfc8 !important;
     border-left: 3px solid #629924;
-    padding-left: 8px;
+    padding-left: 9px !important;
+    margin-bottom: 10px !important;
+    font-size: 1rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.01em !important;
 }
+p, label, .stMarkdown { color: #bababa !important; }
+.stCaption, small { color: #888 !important; font-size: 12px !important; }
 
-/* Primary button: Lichess green */
+/* ── Primary button (Lichess green) ─────────────────────── */
 div[data-testid="stButton"] > button[kind="primary"] {
     background: #629924 !important;
-    color: #0e1117 !important;
-    font-weight: 700 !important;
+    color: #fff !important;
+    font-weight: 600 !important;
     border: none !important;
+    font-family: 'Inter', sans-serif !important;
 }
 div[data-testid="stButton"] > button[kind="primary"]:hover {
     background: #4e7a1b !important;
 }
 
-/* Dataframes */
+/* ── Secondary buttons ───────────────────────────────────── */
+div[data-testid="stButton"] > button {
+    background: #272522 !important;
+    border: 1px solid #3a3a38 !important;
+    color: #bababa !important;
+    font-family: 'Inter', sans-serif !important;
+}
+div[data-testid="stButton"] > button:hover {
+    background: #3a3a38 !important;
+    border-color: #629924 !important;
+}
+
+/* ── Tabs ────────────────────────────────────────────────── */
+div[data-testid="stTabs"] button {
+    font-family: 'Inter', sans-serif !important;
+    font-size: 12.5px !important;
+    color: #888 !important;
+    font-weight: 500 !important;
+}
+div[data-testid="stTabs"] button[aria-selected="true"] {
+    color: #d0cfc8 !important;
+    border-bottom-color: #629924 !important;
+}
+
+/* ── Dataframes ──────────────────────────────────────────── */
 div[data-testid="stDataFrame"] {
     border: 1px solid #3a3a38;
     border-radius: 6px;
     overflow: hidden;
 }
 
-/* Metric cards */
+/* ── Metric cards ────────────────────────────────────────── */
 div[data-testid="metric-container"] {
     background: #272522;
     border: 1px solid #3a3a38;
@@ -73,26 +117,30 @@ div[data-testid="metric-container"] {
     padding: 12px 16px !important;
 }
 
-/* Alerts */
+/* ── Alerts ──────────────────────────────────────────────── */
 div[data-testid="stAlert"] { border-radius: 8px !important; }
 
-/* General text */
-p, label, .stMarkdown { color: #bababa !important; }
-
+/* ── Dividers & misc ─────────────────────────────────────── */
 hr { border-color: #3a3a38 !important; }
 
-/* Scrollable move list */
+/* ── Move list (play panel) ──────────────────────────────── */
 .move-list-scroll {
-    background: #272522;
+    background: #1f1e1c;
     border: 1px solid #3a3a38;
     border-radius: 6px;
     padding: 8px 12px;
-    max-height: 280px;
+    height: 200px;
     overflow-y: auto;
     font-family: 'Courier New', monospace;
     font-size: 13px;
     color: #bababa;
-    line-height: 1.8;
+    line-height: 1.9;
+}
+
+/* ── Scrollable container override ──────────────────────── */
+div[data-testid="stVerticalBlockBorderWrapper"] > div > div[style*="overflow"] {
+    scrollbar-width: thin;
+    scrollbar-color: #3a3a38 #161512;
 }
 </style>
 """
@@ -301,15 +349,8 @@ def _start_tournament() -> None:
 # ---------------------------------------------------------------------------
 
 def _engine_reply(fen: str) -> str | None:
-    """Pick a random legal move from the given FEN (seeded). Returns UCI string."""
-    board = chess.Board(fen)
-    if board.is_game_over():
-        return None
-    legal = list(board.legal_moves)
-    if not legal:
-        return None
-    rng = random.Random(42 + len(st.session_state.get("play_moves", [])))
-    return rng.choice(legal).uci()
+    move_index = len(st.session_state.get("play_moves", []))
+    return _pure_engine_reply(fen, move_index=move_index)
 
 
 # ---------------------------------------------------------------------------
@@ -506,157 +547,179 @@ def _render_analysis_panel() -> None:
     n_agents = len(st.session_state.get("agents") or lb)
     n_games = len(st.session_state.get("results") or [])
     variant = snap.get("variant", st.session_state.get("variant", "standard"))
-
-    # Success banner
     dur_str = f"{duration:.0f}s" if duration else "—"
-    st.success(
-        f"Tournament complete · **{variant.title()}** · "
-        f"**{n_agents}** agents · **{n_games}** games · **{dur_str}**"
+
+    def _pair_label(r) -> str:
+        a = FEATURE_DISPLAY_NAMES.get(r.feature_a, r.feature_a)
+        b = FEATURE_DISPLAY_NAMES.get(r.feature_b, r.feature_b)
+        return f"{a[:13]}+{b[:13]}"
+
+    tab_engine, tab_features, tab_synergy, tab_lb = st.tabs(
+        ["Best Engine", "Features", "Synergy", "Leaderboard"]
     )
 
-    # Best engine card
-    if lb:
-        best = lb[0]
-        short = _agent_short_name(best.agent_name)
+    # ── Tab 1: Best Engine ───────────────────────────────────────
+    with tab_engine:
+        st.caption(
+            f"{variant.title()} · {n_agents} agents · {n_games} games · {dur_str}"
+        )
+        if lb:
+            best = lb[0]
+            short = _agent_short_name(best.agent_name)
+            st.markdown(
+                f'<div style="background:#272522;border:1px solid #3a3a38;'
+                f'border-left:3px solid #629924;'
+                f'border-radius:8px;padding:14px 16px;margin:8px 0 12px;">'
+                f'<div style="font-size:0.95rem;font-weight:700;color:#d0cfc8;">{short}</div>'
+                f'<div style="color:#629924;font-size:0.82rem;margin:5px 0;">'
+                f'Score rate: <strong>{best.score_rate:.4f}</strong>'
+                f'&nbsp;·&nbsp;W {best.wins} / D {best.draws} / L {best.losses}</div>'
+                f'<div style="margin-top:8px;line-height:2;">{_feature_pills(best.features)}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            if st.button("Play Against Best Engine ▶", type="primary", use_container_width=True):
+                st.session_state.update(
+                    view="play",
+                    play_fen=chess.STARTING_FEN,
+                    play_moves=[],
+                    play_status="ongoing",
+                )
+                st.rerun()
+
+            # Top 3 runners-up
+            if len(lb) > 1:
+                st.caption("Runners-up")
+                for i, r in enumerate(lb[1:4], 2):
+                    st.markdown(
+                        f'<div style="display:flex;justify-content:space-between;'
+                        f'padding:5px 10px;border-bottom:1px solid #3a3a38;font-size:12px;">'
+                        f'<span style="color:#888;">#{i}</span>'
+                        f'<span style="color:#bababa;">{_agent_short_name(r.agent_name)[:36]}</span>'
+                        f'<span style="color:#629924;">{r.score_rate:.4f}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
         st.markdown(
-            f'<div style="background:#272522;border:1px solid #3a3a38;'
-            f'border-radius:8px;padding:14px 16px;margin-bottom:10px;">'
-            f'<div style="font-size:1rem;font-weight:700;color:#bababa;">{short}</div>'
-            f'<div style="color:#629924;font-size:0.85rem;margin:4px 0;">'
-            f'Score rate: {best.score_rate:.4f} &nbsp;·&nbsp; '
-            f'W {best.wins} / D {best.draws} / L {best.losses}</div>'
-            f'<div style="margin-top:6px;">{_feature_pills(best.features)}</div>'
-            f'</div>',
+            '<div style="margin-top:16px;">'
+            '<a href="#" onclick="void(0)" style="color:#888;font-size:12px;">← Rebuild</a>'
+            '</div>',
             unsafe_allow_html=True,
         )
-
-        if st.button("Play Against Best Engine ▶", type="primary", use_container_width=True):
-            st.session_state["view"] = "play"
-            st.session_state["play_fen"] = chess.STARTING_FEN
-            st.session_state["play_moves"] = []
-            st.session_state["play_status"] = "ongoing"
+        if st.button("← Rebuild", key="rebuild_btn", use_container_width=False):
+            st.session_state["view"] = "build"
             st.rerun()
 
-    st.divider()
+    # ── Tab 2: Feature Marginals ─────────────────────────────────
+    with tab_features:
+        if not marginals:
+            st.caption("No feature data available.")
+        else:
+            sorted_m = sorted(marginals, key=lambda r: r.marginal, reverse=True)
+            labels = [FEATURE_DISPLAY_NAMES.get(r.feature, r.feature) for r in sorted_m]
+            values = [r.marginal for r in sorted_m]
+            colors = ["#629924" if v >= 0 else "#c84b4b" for v in values]
+            fig = go.Figure(go.Bar(
+                x=values, y=labels, orientation="h",
+                marker_color=colors,
+                hovertemplate="%{y}: %{x:+.4f}<extra></extra>",
+            ))
+            fig.update_layout(
+                height=310,
+                margin=dict(l=0, r=10, t=10, b=0),
+                yaxis=dict(autorange="reversed"),
+                xaxis_title="Win-rate impact",
+                **_CHART_THEME,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            st.caption(
+                "Marginal contribution: avg score _with_ this feature minus avg score _without_ it."
+            )
 
-    # Feature marginals chart
-    if marginals:
-        st.markdown("### Feature Marginals")
-        sorted_m = sorted(marginals, key=lambda r: r.marginal, reverse=True)
-        labels = [FEATURE_DISPLAY_NAMES.get(r.feature, r.feature) for r in sorted_m]
-        values = [r.marginal for r in sorted_m]
-        colors = ["#629924" if v >= 0 else "#ff4d4d" for v in values]
-        fig = go.Figure(go.Bar(
-            x=values, y=labels, orientation="h",
-            marker_color=colors,
-            hovertemplate="%{y}: %{x:+.4f}<extra></extra>",
-        ))
-        fig.update_layout(
-            height=280,
-            margin=dict(l=0, r=0, t=4, b=0),
-            yaxis=dict(autorange="reversed"),
-            xaxis_title="Marginal contribution",
-            **_CHART_THEME,
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    # ── Tab 3: Synergy ───────────────────────────────────────────
+    with tab_synergy:
+        if not synergies:
+            st.caption("No synergy data available.")
+        else:
+            sorted_s = sorted(synergies, key=lambda r: r.synergy, reverse=True)
+            top5 = sorted_s[:5]
+            bot5 = sorted_s[-5:][::-1]
 
-    # Synergy top/bottom side by side
-    if synergies:
-        st.markdown("### Synergy Pairs")
-        sorted_s = sorted(synergies, key=lambda r: r.synergy, reverse=True)
-        top5 = sorted_s[:5]
-        bot5 = sorted_s[-5:][::-1]
-
-        def _pair_label(r) -> str:
-            a = FEATURE_DISPLAY_NAMES.get(r.feature_a, r.feature_a)
-            b = FEATURE_DISPLAY_NAMES.get(r.feature_b, r.feature_b)
-            return f"{a[:12]} + {b[:12]}"
-
-        syn_left, syn_right = st.columns(2)
-        with syn_left:
-            st.caption("Top 5 positive pairs")
+            st.caption("Best pairs (features more valuable together)")
             fig_pos = go.Figure(go.Bar(
                 x=[r.synergy for r in top5],
                 y=[_pair_label(r) for r in top5],
                 orientation="h",
                 marker_color="#629924",
+                hovertemplate="%{y}: %{x:+.4f}<extra></extra>",
             ))
             fig_pos.update_layout(
-                height=220, margin=dict(l=0, r=0, t=4, b=0),
+                height=200, margin=dict(l=0, r=10, t=4, b=0),
                 yaxis=dict(autorange="reversed"),
                 **_CHART_THEME,
             )
             st.plotly_chart(fig_pos, use_container_width=True)
 
-        with syn_right:
-            st.caption("Top 5 negative pairs")
+            st.caption("Worst pairs (redundant or counterproductive)")
             fig_neg = go.Figure(go.Bar(
                 x=[r.synergy for r in bot5],
                 y=[_pair_label(r) for r in bot5],
                 orientation="h",
-                marker_color="#ff4d4d",
+                marker_color="#c84b4b",
+                hovertemplate="%{y}: %{x:+.4f}<extra></extra>",
             ))
             fig_neg.update_layout(
-                height=220, margin=dict(l=0, r=0, t=4, b=0),
+                height=200, margin=dict(l=0, r=10, t=4, b=0),
                 yaxis=dict(autorange="reversed"),
                 **_CHART_THEME,
             )
             st.plotly_chart(fig_neg, use_container_width=True)
 
-    st.divider()
-
-    # Leaderboard dataframe (top 20)
-    if lb:
-        st.markdown("### Leaderboard")
-        rows = [
-            {
-                "Rank": i + 1,
-                "Agent": _agent_short_name(r.agent_name)[:50],
-                "Features": len(r.features),
-                "Score Rate": round(r.score_rate, 4),
-                "W": r.wins,
-                "D": r.draws,
-                "L": r.losses,
-                "Avg Length": round(r.avg_game_length, 1),
-            }
-            for i, r in enumerate(lb[:20])
-        ]
-        st.dataframe(
-            pd.DataFrame(rows),
-            use_container_width=True,
-            hide_index=True,
-            column_config={"Score Rate": st.column_config.NumberColumn(format="%.4f")},
-        )
-
-    # Downloads
-    report_md = st.session_state.get("report_md") or ""
-    results = st.session_state.get("results") or []
-    if report_md or results:
-        st.markdown("**Downloads**")
-        dl_left, dl_right = st.columns(2)
-        if report_md:
-            dl_left.download_button(
-                "⬇ Markdown Report",
-                data=report_md,
-                file_name=f"{variant}_strategy_report.md",
-                mime="text/markdown",
+    # ── Tab 4: Leaderboard ───────────────────────────────────────
+    with tab_lb:
+        if lb:
+            rows = [
+                {
+                    "#": i + 1,
+                    "Agent": _agent_short_name(r.agent_name)[:38],
+                    "Feats": len(r.features),
+                    "Score": round(r.score_rate, 4),
+                    "W": r.wins,
+                    "D": r.draws,
+                    "L": r.losses,
+                }
+                for i, r in enumerate(lb[:20])
+            ]
+            st.dataframe(
+                pd.DataFrame(rows),
                 use_container_width=True,
-            )
-        if results:
-            import json
-            import dataclasses
-            dl_right.download_button(
-                "⬇ JSON Results",
-                data=json.dumps([dataclasses.asdict(r) for r in results], indent=2),
-                file_name=f"{variant}_results.json",
-                mime="application/json",
-                use_container_width=True,
+                hide_index=True,
+                height=340,
+                column_config={"Score": st.column_config.NumberColumn(format="%.4f")},
             )
 
-    st.divider()
-    if st.button("← Rebuild", use_container_width=False):
-        st.session_state["view"] = "build"
-        st.rerun()
+        report_md = st.session_state.get("report_md") or ""
+        results_data = st.session_state.get("results") or []
+        if report_md or results_data:
+            dl_l, dl_r = st.columns(2)
+            if report_md:
+                dl_l.download_button(
+                    "⬇ Report (.md)",
+                    data=report_md,
+                    file_name=f"{variant}_report.md",
+                    mime="text/markdown",
+                    use_container_width=True,
+                )
+            if results_data:
+                import json, dataclasses
+                dl_r.download_button(
+                    "⬇ Results (.json)",
+                    data=json.dumps([dataclasses.asdict(r) for r in results_data], indent=2),
+                    file_name=f"{variant}_results.json",
+                    mime="application/json",
+                    use_container_width=True,
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -716,62 +779,35 @@ def _render_play_panel() -> None:
 
     # Move input
     if play_status == "ongoing" and board_now.turn == chess.WHITE:
-        move_input = st.text_input(
-            "Your move (e.g. e4, Nf3, O-O)",
+        col_in, col_btn = st.columns([3, 1])
+        move_input = col_in.text_input(
+            "Your move",
+            placeholder="e4, Nf3, O-O …",
             key="play_move_input",
-            label_visibility="visible",
+            label_visibility="collapsed",
         )
-        if st.button("Make Move", use_container_width=True):
+        if col_btn.button("Move", type="primary", use_container_width=True):
             if move_input.strip():
                 try:
-                    board_tmp = chess.Board(fen)
-                    move = board_tmp.parse_san(move_input.strip())
-                    if move in board_tmp.legal_moves:
-                        board_tmp.push(move)
-                        play_moves = play_moves + [move.uci()]
-                        new_fen = board_tmp.fen()
-                        # Check game over after player move
-                        if board_tmp.is_checkmate():
-                            st.session_state.update(
-                                play_fen=new_fen,
-                                play_moves=play_moves,
-                                play_status="checkmate",
-                            )
-                        elif board_tmp.is_stalemate() or board_tmp.is_insufficient_material():
-                            st.session_state.update(
-                                play_fen=new_fen,
-                                play_moves=play_moves,
-                                play_status="stalemate",
-                            )
-                        else:
-                            # Engine reply
-                            reply_uci = _engine_reply(new_fen)
-                            if reply_uci:
-                                board_reply = chess.Board(new_fen)
-                                board_reply.push(chess.Move.from_uci(reply_uci))
-                                play_moves = play_moves + [reply_uci]
-                                reply_fen = board_reply.fen()
-                                if board_reply.is_checkmate():
-                                    status = "checkmate"
-                                elif board_reply.is_stalemate() or board_reply.is_insufficient_material():
-                                    status = "stalemate"
-                                else:
-                                    status = "ongoing"
-                                st.session_state.update(
-                                    play_fen=reply_fen,
-                                    play_moves=play_moves,
-                                    play_status=status,
-                                )
-                            else:
-                                st.session_state.update(
-                                    play_fen=new_fen,
-                                    play_moves=play_moves,
-                                )
-                        st.rerun()
-                    else:
-                        st.error("Illegal move.")
-                except Exception as exc:
-                    st.error(f"Invalid move: {exc}")
+                    new_fen, uci = apply_san_move(fen, move_input.strip())
+                    play_moves = play_moves + [uci]
+                    status = game_status(new_fen)
+                    if status == "ongoing":
+                        reply_uci = _engine_reply(new_fen)
+                        if reply_uci:
+                            board_reply = chess.Board(new_fen)
+                            board_reply.push(chess.Move.from_uci(reply_uci))
+                            play_moves = play_moves + [reply_uci]
+                            new_fen = board_reply.fen()
+                            status = game_status(new_fen)
+                    st.session_state.update(
+                        play_fen=new_fen,
+                        play_moves=play_moves,
+                        play_status=status,
+                    )
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
 
     st.divider()
 
@@ -827,15 +863,16 @@ def main() -> None:
         _render_board_area()
 
     with panel_col:
-        view = st.session_state.get("view", "build")
-        if view == "live":
-            _render_live_panel()
-        elif view == "analysis":
-            _render_analysis_panel()
-        elif view == "play":
-            _render_play_panel()
-        else:
-            _render_build_panel()
+        with st.container(height=700, border=False):
+            view = st.session_state.get("view", "build")
+            if view == "live":
+                _render_live_panel()
+            elif view == "analysis":
+                _render_analysis_panel()
+            elif view == "play":
+                _render_play_panel()
+            else:
+                _render_build_panel()
 
 
 if __name__ == "__main__":

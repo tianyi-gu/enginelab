@@ -1,462 +1,391 @@
-# UI Integration & Deployment Plan
+# UI Integration & Deployment Plan (v2)
+
+*Updated 2026-04-25 after full audit of `origin/ui` branch.*
+
+---
 
 ## Context
 
-The EngineLab backend is fully implemented -- chess engine, 3 variants
-(standard, atomic, antichess), 10 evaluation features, agent generation,
-alpha-beta search, round-robin tournament, analysis (marginals + synergy),
-and Markdown report generation all work end-to-end via the CLI (`main.py`).
+The EngineLab backend on `main` is fully working -- chess engine, 3
+variants, 10 features, agent generation, alpha-beta search, tournament,
+analysis, and CLI all run end-to-end.
 
-Pre-computed tournament results exist in `outputs/data/` for both standard
-and atomic chess. The frontend (`ui/app.py`) is a 7-line stub that raises
-`NotImplementedError`. A detailed UI spec exists at `docs/ui_spec.md`
-(912 lines).
+The `origin/ui` branch contains two separate frontends:
 
-This document describes everything required to connect the working backend
-to a Streamlit frontend and deploy it.
+1. **Streamlit UI** (`ui/`) -- 6 files, ~1900 lines. Has the layout,
+   views, charts, and chess viewer built out. But it is **fully mocked**:
+   the "Build Engine" button fakes 5 seconds of progress, then loads
+   synthetic data. Play mode uses random legal moves. Zero connection to
+   the real backend.
+
+2. **React webapp** (`webapp/`) -- TanStack Start + Vite + chess.js.
+   Completely standalone client-side app that **reimplements the entire
+   Python backend in TypeScript** (features, negamax, tournament, analysis).
+   No Python backend needed. Deployable to Cloudflare Workers.
+
+Additionally, the UI branch **regressed the backend**: feature registry
+emptied, atomic/antichess reverted to stubs, alpha-beta lost variant
+support, CLI gutted, RandomAgent removed.
+
+**Strategy:** Use the Streamlit UI as a design/aesthetic base. Keep the
+working backend from `main`. Replace mocks with real backend calls.
 
 ---
 
-## 1. Current State
+## 1. Current State (as of 2026-04-25)
 
-### Backend (fully implemented)
+### Backend on `main` (fully working)
 
 | Component | Key Files | Status |
 |-----------|-----------|--------|
-| Chess engine | `core/board.py`, `core/move_generation.py`, `core/apply_move.py` | Complete |
-| Standard chess | `variants/standard.py` | Complete |
-| Atomic chess | `variants/atomic.py` | Complete |
-| Antichess | `variants/antichess.py` | Complete |
-| 10 features | `features/material.py`, `features/mobility.py`, etc. | Complete |
-| Agent generation | `agents/generate_agents.py` | Complete |
-| Evaluation | `agents/evaluation.py` | Complete |
-| Alpha-beta search | `search/alpha_beta.py` | Complete |
-| Game simulation | `simulation/game.py` | Complete |
-| Round-robin tournament | `tournament/round_robin.py` | Complete |
-| Leaderboard | `tournament/leaderboard.py` | Complete |
-| Results I/O | `tournament/results_io.py` | Complete |
-| Feature marginals | `analysis/feature_marginals.py` | Complete |
-| Pairwise synergy | `analysis/synergy.py` | Complete |
-| Interpretation | `analysis/interpretation.py` | Complete |
-| Report generation | `reports/markdown_report.py` | Complete |
-| CLI | `main.py` (typer) | Complete |
+| Chess engine | `core/board.py`, `core/move_generation.py`, `core/apply_move.py` | Done |
+| Standard chess | `variants/standard.py` | Done |
+| Atomic chess | `variants/atomic.py` | Done |
+| Antichess | `variants/antichess.py` | Done |
+| 10 features | `features/*.py`, `features/registry.py` | Done |
+| Agent generation | `agents/generate_agents.py` | Done |
+| Evaluation (all features) | `agents/evaluation.py` | Done |
+| Alpha-beta (variant-aware) | `search/alpha_beta.py` | Done |
+| Game simulation | `simulation/game.py` (supports RandomAgent + FeatureSubsetAgent) | Done |
+| Round-robin tournament | `tournament/round_robin.py` | Done |
+| Leaderboard | `tournament/leaderboard.py` | Done |
+| Results I/O | `tournament/results_io.py` | Done |
+| Feature marginals | `analysis/feature_marginals.py` | Done |
+| Pairwise synergy | `analysis/synergy.py` | Done |
+| Interpretation | `analysis/interpretation.py` | Done |
+| Report generation | `reports/markdown_report.py` | Done |
+| CLI | `main.py` (full-pipeline, tournament, match, play) | Done |
 
-### Frontend (not implemented)
+### Streamlit UI on `origin/ui` (design done, wiring mocked)
+
+| File | Lines | What It Does | Backend Connection |
+|------|-------|-------------|-------------------|
+| `ui/app.py` | 705 | Main app: sidebar config, build/live/analysis/play views | Mocked -- fake 5s progress, loads `mock_data.py` |
+| `ui/board.py` | 72 | FEN -> SVG via python-chess | Real (no backend dependency) |
+| `ui/chess_viewer.py` | 574 | Game replay + interactive play via chessboard.js | Mocked -- random engine moves |
+| `ui/constants.py` | 62 | Feature list, variant descriptions, session defaults | Hardcoded (duplicates `features/registry.py`) |
+| `ui/mock_data.py` | 490 | Generates fake agents, results, leaderboard, marginals | Entirely synthetic |
+| `ui/play_engine.py` | 71 | Random legal move generator | Mocked -- no real engine |
+
+### React webapp on `origin/ui` (standalone)
 
 | Component | Status |
 |-----------|--------|
-| `ui/app.py` | 7-line stub, raises `NotImplementedError` |
-| `ui/pages/` directory | Does not exist |
-| `ui/board.py` helper | Does not exist |
-| `.streamlit/config.toml` | Does not exist |
-| Deployment config | None (no Dockerfile, Procfile, or vercel.json) |
+| `webapp/src/components/chess/ChessLab.tsx` | 956 lines, full UI |
+| `webapp/src/lib/chess/features.ts` | All 10 features reimplemented in TS |
+| `webapp/src/lib/chess/engine.ts` | Negamax alpha-beta in TS |
+| `webapp/src/lib/chess/analysis.ts` | Marginals + synergy in TS |
 
-### Pre-computed Data
+Self-contained. Runs entirely in-browser. Deployable to Cloudflare Workers.
+**No integration needed** -- this is an independent artifact.
 
-```
-outputs/data/tournament_results_standard.json   (28 KB, 90 games)
-outputs/data/tournament_results_atomic.json     (29 KB, 90 games)
-outputs/reports/standard_strategy_report.md
-outputs/reports/atomic_strategy_report.md
-```
+### What the UI branch broke on the backend
+
+| File | What was regressed | Impact |
+|------|-------------------|--------|
+| `features/registry.py` | Emptied -- all 10 features removed | Agents get 0.0 for all features |
+| `features/*.py` (10 files) | Deleted | No feature implementations |
+| `variants/atomic.py` | Reverted to `NotImplementedError` stub | Atomic chess broken |
+| `variants/antichess.py` | Reverted to stub | Antichess broken |
+| `search/alpha_beta.py` | Removed `variant` parameter, hardcoded standard | Can't search in variants |
+| `agents/evaluation.py` | Only material feature works | Non-material agents are blind |
+| `simulation/game.py` | Removed RandomAgent support | Random baseline games fail |
+| `main.py` | Gutted to stub | CLI broken |
+
+**These regressions are on the UI branch only.** The `main` branch backend
+is intact. Integration must use `main`'s backend, not the UI branch's.
 
 ---
 
-## 2. Backend Gaps
+## 2. Integration Approach
 
-Five things the UI needs that the backend does not currently provide.
+### Merge Strategy
 
-### Gap A: `Board.to_fen()` method
+Do NOT merge the UI branch as-is -- it would destroy the working backend.
+Instead:
+
+1. **Cherry-pick the UI files only** from `origin/ui` into `main`:
+   - `ui/app.py`
+   - `ui/board.py`
+   - `ui/chess_viewer.py`
+   - `ui/constants.py`
+   - `ui/mock_data.py`
+   - `ui/play_engine.py`
+   - `ui/__init__.py`
+   - `.streamlit/config.toml`
+2. **Add missing deps** to `requirements.txt`: `plotly>=5.0.0`, `chess>=1.10.0`
+3. **Take useful backend improvements** from the UI branch:
+   - `tournament/round_robin.py`: progress callback (`on_game_complete`)
+   - `tournament/results_io.py`: improved error handling
+4. **Do NOT take** the UI branch versions of: `features/`, `variants/`,
+   `search/`, `agents/evaluation.py`, `simulation/game.py`, `main.py`
+5. **Then rewire** the UI files to call the real backend instead of mocks
+
+### What "Rewire" Means (file by file)
+
+#### `ui/app.py` -- Replace mock pipeline with real pipeline
+
+Current (mocked):
+```python
+# _start_tournament() just saves config to session_state
+# _render_live_panel() fakes progress for 5 seconds
+# After fake delay: generate_mock_session_state() fills in synthetic data
+```
+
+Rewired:
+```python
+# _start_tournament() launches real pipeline in threading.Thread:
+#   1. generate_feature_subset_agents(selected_features, max_agents, seed)
+#   2. run_round_robin(agents, variant, depth, max_moves, seed, on_game_complete=callback)
+#   3. compute_leaderboard(results, agents)
+#   4. compute_feature_marginals(leaderboard, feature_names, top_k)
+#   5. compute_pairwise_synergies(leaderboard, feature_names)
+#   6. generate_interpretation(best_agent, marginals, synergies, variant)
+# callback updates st.session_state.progress behind a threading.Lock
+```
+
+Key changes:
+- Import from `agents.generate_agents`, `tournament.round_robin`,
+  `tournament.leaderboard`, `analysis.*` instead of `ui.mock_data`
+- Replace `_FAKE_BUILD_DURATION` timer with real `on_game_complete` callback
+- Wire sidebar feature checkboxes to `features.registry.get_feature_names()`
+  instead of hardcoded `ui.constants.ALL_FEATURES`
+- Use real `LeaderboardRow`, `FeatureContributionRow`, `SynergyRow` from
+  backend instead of mock versions
+
+#### `ui/constants.py` -- Replace hardcoded features with registry
+
+Current:
+```python
+ALL_FEATURES = ["material", "king_safety", ...]  # hardcoded list
+```
+
+Rewired:
+```python
+from features.registry import get_feature_names, FEATURE_DESCRIPTIONS
+ALL_FEATURES = get_feature_names()
+```
+
+#### `ui/play_engine.py` -- Replace random moves with real engine
+
+Current:
+```python
+def engine_reply(fen, move_index):
+    rng = random.Random(42 + move_index)
+    return rng.choice(legal).uci()  # random legal move
+```
+
+Rewired:
+```python
+def engine_reply(fen, agent_features, depth=2, variant="standard"):
+    board = board_from_fen(fen)
+    agent = FeatureSubsetAgent(...)  # from selected features
+    engine = AlphaBetaEngine(agent, depth, variant=variant)
+    move = engine.choose_move(board)
+    return move.to_uci()
+```
+
+This requires a `board_from_fen()` helper that converts a FEN string to
+the custom `Board` object (inverse of `Board.to_fen()`).
+
+#### `ui/mock_data.py` -- Delete or keep as fallback
+
+Once rewired, this file is no longer needed. It could be kept as a
+fallback for demo mode (when backend is unavailable), but the primary
+path should use real data.
+
+#### `ui/chess_viewer.py` -- No changes needed for replay
+
+The game replay viewer (`chess_game_viewer()`) already accepts a move
+list and replays it. It just needs real move data from `GameResult.move_list`
+instead of randomly generated games.
+
+The interactive play mode (`chess_play_interactive()`) currently uses
+JavaScript random moves. To integrate with the real engine, the JS bridge
+must send the current FEN to Python, call `engine_reply()` (rewired above),
+and return the move to JavaScript. This is the most fragile integration
+point.
+
+---
+
+## 3. Backend Gaps (on `main`)
+
+Small additions needed to support the UI.
+
+### Gap A: `Board.to_fen()` -- Export board state as FEN string
 
 **File:** `core/board.py`
+**Why:** UI renders boards via `chess.svg.board(chess.Board(fen))`
+**Size:** ~20 lines
 
-The UI spec requires board rendering via `chess.svg.board()` from the
-`python-chess` library, which accepts FEN strings. The custom `Board`
-class has no FEN export.
+### Gap B: `Board.from_fen()` -- Import FEN string to Board
 
-**Solution:** Add a `to_fen(self) -> str` method that converts `grid`,
-`side_to_move`, `castling_rights`, `en_passant_square`, and `move_count`
-into a standard FEN string. ~20 lines.
+**File:** `core/board.py`
+**Why:** Play mode receives FEN from JavaScript, needs to create a Board
+for the engine to evaluate
+**Size:** ~25 lines
 
-```python
-def to_fen(self) -> str:
-    """Convert board state to FEN string."""
-    rows = []
-    for rank in range(7, -1, -1):
-        empty = 0
-        row_str = ""
-        for col in range(8):
-            piece = self.grid[rank][col]
-            if piece is None:
-                empty += 1
-            else:
-                if empty > 0:
-                    row_str += str(empty)
-                    empty = 0
-                row_str += piece
-        if empty > 0:
-            row_str += str(empty)
-        rows.append(row_str)
+### Gap C: `move_list` field on `GameResult`
 
-    castling = ""
-    for c in ["K", "Q", "k", "q"]:
-        if self.castling_rights.get(c, False):
-            castling += c
-    if not castling:
-        castling = "-"
+**File:** `simulation/game.py`, `tournament/results_io.py`
+**Why:** Game replay viewer needs the actual sequence of moves
+**Size:** Add `move_list: list[str] = field(default_factory=list)` to
+dataclass, append `move.to_uci()` in `play_game()` loop, update I/O
 
-    ep = "-"
-    if self.en_passant_square is not None:
-        from core.coordinates import square_to_algebraic
-        ep = square_to_algebraic(*self.en_passant_square)
-
-    return f"{'/'.join(rows)} {self.side_to_move} {castling} {ep} 0 {self.move_count // 2 + 1}"
-```
-
-### Gap B: Move history in `GameResult`
-
-**File:** `simulation/game.py`
-
-`GameResult` only stores summary stats (`moves: int`, `winner`,
-`termination_reason`). Game replay (Page 5) and the live game viewer
-(Page 2) need the actual move sequence.
-
-**Solution:** Add `move_list: list[str]` field to `GameResult`. In
-`play_game()`, append `move.to_uci()` after each move. Update
-`tournament/results_io.py` to serialize/deserialize the new field.
-
-```python
-@dataclass
-class GameResult:
-    # ... existing fields ...
-    move_list: list[str] = field(default_factory=list)  # UCI strings
-```
-
-Impact: ~2 bytes per ply, ~600 KB extra across 7500 games at 40 plies
-average. Existing JSON results in `outputs/data/` would need regeneration
-to include move lists, or the replay feature must handle missing data
-gracefully.
-
-### Gap C: Progress callback in `run_round_robin()`
+### Gap D: Progress callback in `run_round_robin()`
 
 **File:** `tournament/round_robin.py`
+**Why:** Live tournament view needs per-game progress updates
+**Note:** The UI branch already implemented this. Cherry-pick it.
 
-Currently uses `tqdm` in a tight loop. The UI needs a callback to update
-`st.session_state` with live progress.
-
-**Solution:** Add optional parameter:
-
-```python
-def run_round_robin(
-    agents, variant, depth, max_moves, seed,
-    on_game_complete=None,  # Callable(games_done, total, result) | None
-) -> list[GameResult]:
-```
-
-After each game, call `on_game_complete(len(results), total, result)` if
-provided. Backward compatible -- existing CLI code passes nothing.
-
-### Gap D: Missing Python dependencies
+### Gap E: Missing dependencies
 
 **File:** `requirements.txt`
+**Add:** `plotly>=5.0.0`, `chess>=1.10.0`
 
-Add:
-```
-plotly>=5.0.0       # interactive charts (Plotly is used throughout the UI spec)
-chess>=1.10.0       # python-chess for SVG board rendering
-```
+### Gap F: `.streamlit/config.toml`
 
-### Gap E: Streamlit theme configuration
-
-**File:** `.streamlit/config.toml` (create new)
-
-```toml
-[theme]
-base = "dark"
-primaryColor = "#00e676"
-backgroundColor = "#0e1117"
-secondaryBackgroundColor = "#161b22"
-textColor = "#e6edf3"
-font = "monospace"
-```
+**Note:** Already exists on the UI branch. Cherry-pick it.
 
 ---
 
-## 3. UI Implementation
+## 4. Build Sequence
 
-### 3.1 Architecture
+### Phase 0: Setup (no UI changes)
 
-```
-ui/
-├── app.py                   # Entry point: sidebar, session state, thread launcher
-├── board.py                 # Shared helper: Board -> FEN -> chess.svg -> SVG string
-└── pages/
-    ├── 1_lab.py             # Home / configure / load previous results
-    ├── 2_tournament.py      # Live progress + completed tournament view
-    ├── 3_analysis.py        # Tabbed analysis (leaderboard, features, synergy)
-    ├── 4_explorer.py        # Build-your-own-engine interactive tool
-    └── 5_play_watch.py      # Game replay + human vs engine
-```
+| Step | Work | Files |
+|------|------|-------|
+| 0a | Add `plotly`, `chess` to `requirements.txt` | `requirements.txt` |
+| 0b | Cherry-pick `.streamlit/config.toml` from UI branch | `.streamlit/config.toml` |
+| 0c | Add `Board.to_fen()` and `Board.from_fen()` | `core/board.py` |
+| 0d | Add `move_list` to `GameResult`, update `play_game()` and I/O | `simulation/game.py`, `tournament/results_io.py` |
+| 0e | Add `on_game_complete` callback to `run_round_robin()` | `tournament/round_robin.py` |
+| 0f | Regenerate tournament results with move lists | `outputs/data/*.json` |
 
-Launch with: `streamlit run ui/app.py`
+### Phase 1: Bring UI files to main
 
-### 3.2 Integration Map
+| Step | Work |
+|------|------|
+| 1a | Cherry-pick `ui/app.py`, `ui/board.py`, `ui/chess_viewer.py`, `ui/constants.py`, `ui/mock_data.py`, `ui/play_engine.py`, `ui/__init__.py` |
+| 1b | Verify `streamlit run ui/app.py` launches (still using mocks) |
 
-Each page calls existing backend functions. No new backend logic is needed
-beyond the gaps above.
+### Phase 2: Rewire to real backend
 
-#### `ui/app.py` -- Sidebar + orchestration
+| Step | Work | Priority |
+|------|------|----------|
+| 2a | `ui/constants.py`: import features from registry instead of hardcoding | High |
+| 2b | `ui/app.py`: replace `generate_mock_session_state()` with real pipeline in background thread | High |
+| 2c | `ui/app.py`: wire "Load Results" to `tournament.results_io.load_results_json()` + real analysis pipeline | High |
+| 2d | `ui/play_engine.py`: replace random moves with `AlphaBetaEngine.choose_move()` | Medium |
+| 2e | `ui/chess_viewer.py`: feed real `GameResult.move_list` to replay viewer | Medium |
+| 2f | `ui/app.py`: wire play mode to use the tournament's best agent | Medium |
+| 2g | Remove or gate `ui/mock_data.py` behind a fallback flag | Low |
 
-```
-Backend calls:
-  features.registry.get_feature_names()          -> populate checkbox list
-  features.registry.FEATURE_DESCRIPTIONS         -> checkbox help text
-  agents.generate_agents.generate_feature_subset_agents()  -> agent count preview
+### Phase 3: Deployment
 
-Background thread (_run_tournament) calls the full pipeline:
-  1. generate_feature_subset_agents(features, max_agents, seed)
-  2. run_round_robin(agents, variant, depth, max_moves, seed, on_game_complete=callback)
-  3. compute_leaderboard(results, agents)
-  4. compute_feature_marginals(leaderboard, feature_names, top_k)
-  5. compute_pairwise_synergies(leaderboard, feature_names)
-  6. generate_interpretation(best_agent, marginals, synergies, variant)
-  7. generate_markdown_report(...)
-
-All results stored in st.session_state.
-```
-
-#### `ui/board.py` -- Board rendering helper
-
-```python
-import chess
-import chess.svg
-from core.board import Board
-
-def render_board_svg(board: Board, last_move=None, size=400) -> str:
-    fen = board.to_fen()
-    chess_board = chess.Board(fen)
-    # Optionally highlight last move, exploded squares, etc.
-    return chess.svg.board(chess_board, size=size)
-```
-
-Used by Pages 2, 4, and 5.
-
-#### `ui/pages/1_lab.py` -- Home page
-
-```
-Reads:  st.session_state config keys
-Calls:  tournament.results_io.load_results_json()  (for loading saved results)
-        pathlib.Path.glob("outputs/data/*.json")   (scan for existing files)
-```
-
-Content: pipeline diagram, preset buttons (Debug/Small/Medium/Full),
-load previous results file picker.
-
-#### `ui/pages/2_tournament.py` -- Tournament view
-
-Two states:
-
-**Live state** (tournament running):
-```
-Reads from session state (updated by background thread):
-  progress, games_completed, total_games, start_time
-Calls:
-  tournament.leaderboard.compute_leaderboard()  (partial, on results-so-far)
-  ui.board.render_board_svg()                   (live game mini-viewer)
-```
-
-**Completed state** (tournament done):
-```
-Reads:  st.session_state["leaderboard"], ["marginals"]
-```
-
-Displays: progress bar, emerging leaderboard, summary cards, top features.
-
-#### `ui/pages/3_analysis.py` -- Analysis (5 tabs)
-
-Pure visualization. All data from `st.session_state`, no direct backend calls.
-
-| Tab | Data Source | Visualization |
-|-----|-------------|---------------|
-| Leaderboard | `session_state["leaderboard"]` | `st.dataframe` + Plotly bar chart |
-| Feature Intelligence | `session_state["marginals"]` | Plotly horizontal bar chart |
-| Synergy Matrix | `session_state["synergies"]` | Plotly heatmap (`go.Heatmap`) |
-| Cross-Variant | `session_state["all_results"]` | Side-by-side comparison charts |
-| Report | `session_state["report_md"]` | `st.markdown()` + download button |
-
-Easiest page to build and test.
-
-#### `ui/pages/4_explorer.py` -- Build-your-own-engine
-
-```
-Reads:  st.session_state["leaderboard"]   -> look up actual win rate
-        st.session_state["marginals"]      -> sum marginal contributions
-Displays: Plotly waterfall chart (go.Waterfall) for feature contributions
-```
-
-User picks features via checkboxes, sees predicted vs actual performance.
-
-#### `ui/pages/5_play_watch.py` -- Replay + Play
-
-**Mode A (Watch a game):**
-```
-Reads:  st.session_state["results"]       -> pick a game
-Uses:   GameResult.move_list              -> step through moves (requires Gap B)
-Calls:  ui.board.render_board_svg()       -> render each position
-        agents.evaluation.contributions() -> per-move feature breakdown
-```
-
-**Mode B (Play vs engine):**
-```
-Calls:  agents.feature_subset_agent.FeatureSubsetAgent()  -> construct agent
-        search.alpha_beta.AlphaBetaEngine.choose_move()   -> engine moves
-        agents.evaluation.contributions()                  -> transparency panel
-Uses:   chessboard.js via st.components.v1.html()          -> interactive board
-```
-
-Most complex page. Depends on Gaps A and B being resolved.
-
-### 3.3 Threading Model
-
-```
-Main thread (Streamlit):
-  - Renders UI
-  - Reads from st.session_state
-  - Polls for updates via st.fragment or periodic rerun
-
-Background thread (tournament):
-  - Runs the full pipeline
-  - Writes to st.session_state behind a threading.Lock
-  - Calls on_game_complete callback to update progress
-  - Never calls st.rerun() directly (only sets a flag)
-```
+| Step | Work |
+|------|------|
+| 3a | Create `Dockerfile` |
+| 3b | Test Streamlit Cloud deployment with pre-computed data |
+| 3c | Verify `pytest` still passes |
 
 ---
 
-## 4. Deployment
+## 5. Deployment Options
 
-### Option 1: Streamlit Cloud (recommended for demos)
+### Streamlit Cloud (recommended for demo)
 
-**Pros:** Zero-config, free tier, HTTPS, auto-deploys from GitHub.
+- Just needs GitHub repo + `requirements.txt` (already exists)
+- Set entry point to `ui/app.py`
+- Ship pre-computed `outputs/data/*.json` for "Load Results" mode
+- CPU limits mean full tournaments may timeout -- limit live runs to
+  small configs (2-3 features, depth 1)
 
-**Cons:** ~1 GB RAM limit, limited CPU. Full tournaments (10 features,
-depth 2, ~6K games) will timeout. Depth 1 with 3 features (~42 games)
-should work.
-
-**Setup:**
-1. Push repo to GitHub (already done)
-2. Connect repo at share.streamlit.io
-3. Set entry point to `ui/app.py`
-4. `.streamlit/config.toml` and `requirements.txt` are auto-detected
-5. Ship pre-computed `outputs/data/*.json` in the repo for "Load Results" mode
-
-**Best strategy:** Deploy with pre-computed data as the default experience.
-Limit the live "Run Tournament" to small configs (Debug/Small presets only).
-
-### Option 2: Docker (recommended for full capability)
-
-**Setup:** Create `Dockerfile` at repo root:
+### Docker (recommended for real usage)
 
 ```dockerfile
 FROM python:3.12-slim
-
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
 COPY . .
-
 EXPOSE 8501
-
-HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health || exit 1
-
 CMD ["streamlit", "run", "ui/app.py", \
      "--server.port=8501", \
      "--server.address=0.0.0.0", \
      "--server.headless=true"]
 ```
 
-Can deploy to: Railway, Fly.io, Google Cloud Run, AWS ECS, DigitalOcean
-App Platform, or any VPS.
+Deploy to Railway, Fly.io, Cloud Run, etc.
 
-**Pros:** Full CPU access, no timeout limits, predictable environment.
+### React webapp (already deployable)
 
-### Option 3: Vercel (not recommended)
+The `webapp/` directory is a self-contained React app that reimplements
+the full pipeline in TypeScript. It can be deployed independently to
+Cloudflare Workers, Vercel, or any static host. No Python backend needed.
+This is a separate deployment artifact from the Streamlit app.
 
-Streamlit requires a persistent WebSocket connection. Vercel's serverless
-model fundamentally conflicts with this:
-- Serverless functions have execution time limits
-- No persistent WebSocket support for Streamlit's bidirectional protocol
-- Tournament computation can run for minutes
+### Vercel (not recommended for Streamlit)
 
-If Vercel deployment is mandatory, the frontend would need to be rewritten
-in Next.js/React with API routes calling the Python backend as a
-microservice. This is a much larger project.
+Streamlit requires persistent WebSocket connections. Vercel's serverless
+model does not support this. The React `webapp/` works fine on Vercel,
+but the Streamlit `ui/` does not.
 
 ---
 
-## 5. Build Sequence
+## 6. What Exists vs What Needs Rewiring
 
-Ordered by dependency and priority. Earlier phases unblock later ones.
-
-| Phase | Work | Files | Depends On | Est. Hours |
-|-------|------|-------|------------|-----------|
-| 0a | Add `plotly`, `chess` to requirements | `requirements.txt` | -- | 0.1 |
-| 0b | Create Streamlit theme config | `.streamlit/config.toml` | -- | 0.1 |
-| 0c | Add `Board.to_fen()` | `core/board.py` | -- | 0.5 |
-| 0d | Add `move_list` to `GameResult` | `simulation/game.py`, `tournament/results_io.py` | -- | 1.0 |
-| 0e | Add progress callback to round-robin | `tournament/round_robin.py` | -- | 0.5 |
-| 1 | Entry point + sidebar + threading | `ui/app.py` | 0a-0e | 3.0 |
-| 2 | Board rendering helper | `ui/board.py` | 0c | 1.0 |
-| 3 | Analysis page (5 tabs) | `ui/pages/3_analysis.py` | 1 | 4.0 |
-| 4 | Game replay (Mode A) | `ui/pages/5_play_watch.py` | 1, 2, 0d | 3.0 |
-| 5 | Tournament completed state | `ui/pages/2_tournament.py` | 1 | 2.0 |
-| 6 | Tournament live state | `ui/pages/2_tournament.py` | 1, 0e | 4.0 |
-| 7 | Home page + presets + load | `ui/pages/1_lab.py` | 1 | 2.0 |
-| 8 | Explorer (waterfall + what-if) | `ui/pages/4_explorer.py` | 1, 3 | 3.0 |
-| 9 | Interactive play (Mode B) | `ui/pages/5_play_watch.py` | 2, 0c | 4.0 |
-| 10 | Cross-variant comparison tab | `ui/pages/3_analysis.py` | 3 | 1.5 |
-| 11 | Dockerfile + deployment config | `Dockerfile` | All | 1.0 |
-| 12 | Integration testing + polish | -- | All | 3.0 |
-| **Total** | | | | **~33** |
-
-### Minimum Viable Demo
-
-To get a working demo that loads pre-computed results and shows analysis
-charts (no live tournament, no interactive play):
-
-Phases 0a, 0b, 0c, 1, 2, 3, 5, 7 = **~14 hours**
+| UI Feature | Current State (mocked) | What Rewiring Looks Like |
+|-----------|----------------------|--------------------------|
+| Feature selection | Hardcoded 10-item list in `constants.py` | Pull from `features.registry.get_feature_names()` |
+| "Build Engine" button | Fakes 5s delay, loads `mock_data.py` | Launches real `generate_agents` + `run_round_robin` + analysis in background thread |
+| Progress bar | Timer-based fake (0% to 100% over 5s) | Real `on_game_complete(done, total)` callback from tournament |
+| Leaderboard table | Synthetic `LeaderboardRow` objects from mock | Real `compute_leaderboard(results, agents)` output |
+| Feature marginals chart | Hardcoded marginal values per variant | Real `compute_feature_marginals(leaderboard, features)` |
+| Synergy heatmap | Synthetic synergy matrix | Real `compute_pairwise_synergies(leaderboard, features)` |
+| Interpretation text | Template string with mock values | Real `generate_interpretation(best, marginals, synergies, variant)` |
+| Game replay viewer | Random game generated by `chess.Board()` | Real `GameResult.move_list` from tournament |
+| Play vs engine | Random legal moves (`random.choice(legal)`) | Real `AlphaBetaEngine.choose_move(board)` using best agent |
+| Load previous results | Not functional | `tournament.results_io.load_results_json()` + full analysis pipeline |
 
 ---
 
-## 6. Risk Areas
+## 7. Risk Areas
 
-1. **Live tournament viewer (Page 2, live state)** -- Coordinating a
-   CPU-intensive background thread with Streamlit's rerun model is the
-   hardest integration challenge. Budget extra time.
+1. **Background thread + Streamlit rerun** -- Streamlit's execution model
+   reruns the script on every interaction. The background tournament thread
+   must write to `st.session_state` behind a lock, and the main thread
+   must poll for updates. This is the trickiest integration.
 
-2. **Interactive play (Page 5, Mode B)** -- The chessboard.js embed via
-   `st.components.v1.html()` requires a JavaScript-to-Python bridge
-   (postMessage to hidden text_input) that is fragile and has latency.
+2. **Play mode JS bridge** -- `chess_viewer.py` embeds chessboard.js via
+   HTML component. Getting the engine's move from Python back into JavaScript
+   requires a postMessage bridge that's inherently fragile. Consider
+   using SVG board + click-based input as a simpler alternative.
 
-3. **Streamlit Cloud CPU limits** -- Full tournaments will likely timeout.
-   Plan for "Results mode" as the primary deployed experience.
+3. **FEN round-trip** -- The custom `Board` class uses a different internal
+   representation than python-chess. `to_fen()` and `from_fen()` must be
+   exact inverses. Edge cases: en passant squares, castling rights after
+   rook capture, promotion states.
 
-4. **Existing JSON results lack move lists** -- After Gap B is resolved,
-   existing `outputs/data/*.json` files must be regenerated to include
-   move history, or the replay feature must handle missing data.
+4. **Existing JSON results** -- The pre-computed `outputs/data/*.json`
+   files don't have `move_list`. After adding the field, either regenerate
+   them or make the replay viewer handle missing move lists gracefully.
 
 ---
 
-## 7. Verification Checklist
+## 8. Verification Checklist
 
-- [ ] `pip install -r requirements.txt` succeeds with plotly + chess
-- [ ] `streamlit run ui/app.py` launches without error
-- [ ] Sidebar renders: variant radio, feature checkboxes, depth slider
-- [ ] Load `outputs/data/tournament_results_standard.json` -> leaderboard renders
-- [ ] Analysis page: all 5 tabs display charts/tables
-- [ ] Run debug tournament (2 features, depth 1, max 20 moves) -> completes in-browser
-- [ ] Live tournament page shows progress bar and emerging leaderboard
-- [ ] Game replay steps through moves with board visualization
-- [ ] `docker build -t enginelab . && docker run -p 8501:8501 enginelab` serves the app
-- [ ] `pytest` still passes after all changes
+- [ ] `pip install -r requirements.txt` succeeds (plotly + chess added)
+- [ ] `streamlit run ui/app.py` launches without error on `main`
+- [ ] Sidebar shows features from `features.registry`, not hardcoded list
+- [ ] "Build Engine" runs a real tournament (2 features, depth 1, max 20 moves)
+- [ ] Progress bar updates in real time during tournament
+- [ ] Leaderboard shows real win rates (not all 0.500)
+- [ ] Feature marginals chart shows non-zero marginals
+- [ ] Synergy heatmap renders from real data
+- [ ] "Load Results" loads `outputs/data/tournament_results_standard.json`
+- [ ] Game replay steps through real moves on the board
+- [ ] Play mode: engine makes intelligent moves (not random)
+- [ ] Variant selector works: standard vs atomic produce different results
+- [ ] `python main.py full-pipeline --variant standard --depth 1 --max-moves 40` still works
+- [ ] `pytest` passes

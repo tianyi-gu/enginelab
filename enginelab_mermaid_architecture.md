@@ -10,23 +10,7 @@ This document separates the architecture into three scopes:
 
 # 1. Frontend Architecture
 
-## 1.1 Frontend C4 Model
-
-```mermaid
-C4Context
-    title Frontend C4 Context - EngineLab UI
-
-    Person(user, "User / Judge / Player", "Runs tournaments, views analysis, plays against generated engines")
-    System_Boundary(frontend, "Frontend: Streamlit UI") {
-        Container(streamlit, "Streamlit App", "Python + Streamlit", "Interactive web UI for building engines, running tournaments, viewing boards, charts, and reports")
-    }
-    System(backend, "EngineLab Backend", "Python chess engine, tournament, analysis, reporting pipeline")
-
-    Rel(user, streamlit, "Uses browser")
-    Rel(streamlit, backend, "Calls Python modules directly")
-```
-
-## 1.2 Frontend Component Diagram
+## 1.1 Frontend Component Diagram
 
 ```mermaid
 graph TD
@@ -114,31 +98,7 @@ flowchart LR
     UI --> REPORT[Markdown Report View]
 ```
 
-## 1.6 Frontend Package Diagram
-
-```mermaid
-graph TD
-    subgraph ui_package[ui/]
-        APP[app.py]
-        BOARD[board.py]
-        VIEWER[chess_viewer.py]
-        PLAY[play_engine.py]
-        CONST[constants.py]
-    end
-
-    APP --> CONST
-    APP --> BOARD
-    APP --> VIEWER
-    APP --> PLAY
-    APP --> agents[agents/]
-    APP --> tournament[tournament/]
-    APP --> analysis[analysis/]
-    APP --> reports[reports/]
-    PLAY --> core[core/]
-    PLAY --> search[search/]
-```
-
-## 1.7 Frontend Class Diagram
+## 1.6 Frontend Class Diagram
 
 ```mermaid
 classDiagram
@@ -176,7 +136,7 @@ classDiagram
     StreamlitApp --> GameResult
 ```
 
-## 1.8 Frontend Activity Diagram
+## 1.7 Frontend Activity Diagram
 
 ```mermaid
 flowchart TD
@@ -200,30 +160,7 @@ flowchart TD
 
 # 2. Backend Architecture
 
-## 2.1 Backend C4 Model
-
-```mermaid
-C4Context
-    title Backend C4 Context - EngineLab Core Pipeline
-
-    Person(user, "User / CLI / UI", "Requests chess engine experiments")
-    System_Boundary(backend, "Backend: EngineLab Python System") {
-        Container(cli, "CLI", "Typer", "Runs random games, matches, tournaments, analysis, full pipeline")
-        Container(engine, "Chess Engine", "Python", "Board, legal moves, variants, alpha-beta search")
-        Container(harness, "Tournament Harness", "Python", "Runs games and round-robin tournaments")
-        Container(analytics, "Analysis + Reporting", "Python", "Computes feature marginals, synergies, interpretation, markdown reports")
-        ContainerDb(outputs, "Output Files", "JSON / CSV / Markdown", "Stores tournament results and reports")
-    }
-
-    Rel(user, cli, "Runs commands")
-    Rel(cli, engine, "Creates agents and engines")
-    Rel(cli, harness, "Runs simulations")
-    Rel(harness, engine, "Requests moves and applies rules")
-    Rel(harness, outputs, "Writes JSON/CSV")
-    Rel(analytics, outputs, "Reads results, writes reports")
-```
-
-## 2.2 Backend Component Diagram
+## 2.1 Backend Component Diagram
 
 ```mermaid
 graph TD
@@ -344,41 +281,7 @@ flowchart LR
     SY --> REP
 ```
 
-## 2.6 Backend Package Diagram
-
-```mermaid
-graph TD
-    main[main.py] --> agents[agents]
-    main --> simulation[simulation]
-    main --> tournament[tournament]
-    main --> analysis[analysis]
-    main --> reports[reports]
-
-    agents --> features[features]
-    agents --> core[core]
-    search[search] --> agents
-    search --> variants[variants]
-    search --> core
-    simulation --> search
-    simulation --> variants
-    simulation --> core
-    tournament --> simulation
-    tournament --> agents
-    analysis --> tournament
-    reports --> tournament
-    reports --> analysis
-    variants --> core
-    features --> core
-    tests[tests] --> core
-    tests --> variants
-    tests --> agents
-    tests --> search
-    tests --> simulation
-    tests --> tournament
-    tests --> analysis
-```
-
-## 2.7 Backend Class Diagram
+## 2.6 Backend Class Diagram
 
 ```mermaid
 classDiagram
@@ -466,7 +369,7 @@ classDiagram
     SynergyRow --> LeaderboardRow
 ```
 
-## 2.8 Backend Activity Diagram
+## 2.7 Backend Activity Diagram
 
 ```mermaid
 flowchart TD
@@ -493,36 +396,7 @@ flowchart TD
 
 # 3. Whole Project Architecture
 
-## 3.1 Whole Project C4 Model
-
-```mermaid
-C4Context
-    title Whole Project C4 Context - EngineLab
-
-    Person(user, "User / Judge / Researcher", "Uses EngineLab to discover useful chess strategy features")
-
-    System_Boundary(system, "EngineLab") {
-        Container(ui, "Streamlit UI", "Python + Streamlit", "Visual interface for play, tournament control, charts, and reports")
-        Container(cli, "CLI", "Typer", "Command-line access to the full pipeline")
-        Container(core, "Chess Core + Variants", "Python", "Board state, moves, legal move generation, standard/atomic/antichess rules")
-        Container(engine, "Search + Evaluation", "Python", "Alpha-beta search using feature-subset evaluation")
-        Container(harness, "Simulation + Tournament", "Python", "Runs games and round-robin experiments")
-        Container(analysis, "Analysis + Reports", "Python", "Leaderboard, marginal contribution, synergy, interpretation, markdown")
-        ContainerDb(outputs, "Artifacts", "JSON / CSV / Markdown", "Persisted results and reports")
-    }
-
-    Rel(user, ui, "Uses browser")
-    Rel(user, cli, "Runs terminal commands")
-    Rel(ui, harness, "Starts tournaments")
-    Rel(cli, harness, "Starts tournaments")
-    Rel(harness, engine, "Requests moves")
-    Rel(engine, core, "Generates/applies moves")
-    Rel(harness, outputs, "Saves results")
-    Rel(analysis, outputs, "Reads/writes artifacts")
-    Rel(ui, analysis, "Displays analysis")
-```
-
-## 3.2 Whole Project Component Diagram
+## 3.1 Whole Project Component Diagram
 
 ```mermaid
 graph TD
@@ -743,48 +617,7 @@ sequenceDiagram
 
 ---
 
-## 3.6 Whole Project Package Diagram
-
-```mermaid
-graph TD
-    root[EngineLab Project] --> ui[ui]
-    root --> main[main.py]
-    root --> core[core]
-    root --> variants[variants]
-    root --> features[features]
-    root --> agents[agents]
-    root --> search[search]
-    root --> simulation[simulation]
-    root --> tournament[tournament]
-    root --> analysis[analysis]
-    root --> reports[reports]
-    root --> tests[tests]
-    root --> docs[docs]
-
-    ui --> agents
-    ui --> tournament
-    ui --> analysis
-    ui --> reports
-    ui --> search
-
-    main --> agents
-    main --> tournament
-    main --> analysis
-    main --> reports
-
-    variants --> core
-    features --> core
-    agents --> features
-    search --> agents
-    search --> variants
-    simulation --> search
-    simulation --> variants
-    tournament --> simulation
-    analysis --> tournament
-    reports --> analysis
-```
-
-## 3.7 Whole Project Class Diagram
+## 3.6 Whole Project Class Diagram
 
 ```mermaid
 classDiagram
@@ -821,7 +654,7 @@ classDiagram
     Board --> Move
 ```
 
-## 3.8 Whole Project Activity Diagram
+## 3.7 Whole Project Activity Diagram
 
 ```mermaid
 flowchart TD
